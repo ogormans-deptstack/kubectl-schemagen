@@ -12,7 +12,11 @@ import (
 	"github.com/ogormans-deptstack/kubectl-schemagen/cmd/kubectl-schemagen/scaffold"
 )
 
-var version = "dev"
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
 
 // exitCoder is implemented by errors that carry a specific exit code.
 type exitCoder interface {
@@ -40,7 +44,7 @@ func newRootCommand() *cobra.Command {
 OpenAPI v3 schema for manifest generation, API migration, and scaffolding.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Version:       version,
+		Version:       formatVersion(),
 	}
 
 	cmd.AddCommand(manifest.NewCommand())
@@ -48,4 +52,15 @@ OpenAPI v3 schema for manifest generation, API migration, and scaffolding.`,
 	cmd.AddCommand(scaffold.NewCommand())
 
 	return cmd
+}
+
+func formatVersion() string {
+	if commit == "unknown" && date == "unknown" {
+		return version
+	}
+	short := commit
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	return fmt.Sprintf("%s (commit %s, built %s)", version, short, date)
 }

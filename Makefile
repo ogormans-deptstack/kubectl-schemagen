@@ -2,9 +2,11 @@ BINARY_NAME := kubectl-schemagen
 BUILD_DIR := bin
 GO_MODULE := github.com/ogormans-deptstack/kubectl-schemagen
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)"
 
-.PHONY: build test test-unit test-e2e lint clean install help
+.PHONY: build test test-unit test-e2e test-coverage lint clean install help
 
 help:
 	@echo "Targets:"
@@ -26,6 +28,12 @@ test-unit:
 
 test-e2e:
 	go test -race -count=1 -tags=e2e -timeout=10m ./test/e2e/...
+
+test-coverage:
+	go test -race -coverprofile=coverage.out ./pkg/... ./cmd/... ./internal/...
+	go tool cover -func=coverage.out
+	@echo ""
+	@echo "HTML report: go tool cover -html=coverage.out"
 
 lint:
 	golangci-lint run ./...

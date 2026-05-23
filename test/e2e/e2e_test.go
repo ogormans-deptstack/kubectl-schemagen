@@ -1118,6 +1118,150 @@ func TestMigrateEdgeCases(t *testing.T) {
 	})
 }
 
+func TestManifestJSONOutput(t *testing.T) {
+	binaryPath := findBinary(t)
+	ensureCluster(t)
+
+	t.Run("generates valid JSON with -o json", func(t *testing.T) {
+		cmd := exec.Command(binaryPath, "manifest", "Deployment", "-o", "json")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("manifest -o json failed: %v\nstderr: %s", err, stderr.String())
+		}
+		output := stdout.String()
+		if !strings.HasPrefix(strings.TrimSpace(output), "{") {
+			t.Errorf("expected JSON object, got: %.50s", output)
+		}
+		if !strings.Contains(output, `"kind"`) {
+			t.Error("JSON output missing kind field")
+		}
+		if !strings.Contains(output, `"Deployment"`) {
+			t.Error("JSON output missing Deployment kind value")
+		}
+	})
+
+	t.Run("JSON output passes dry-run", func(t *testing.T) {
+		cmd := exec.Command(binaryPath, "manifest", "ConfigMap", "-o", "json", "--name=json-test-cm")
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("manifest -o json failed: %v", err)
+		}
+		// kubectl create accepts JSON directly
+		kubectlDryRun(t, stdout.String())
+	})
+
+	t.Run("rejects invalid output format", func(t *testing.T) {
+		cmd := exec.Command(binaryPath, "manifest", "Pod", "-o", "xml")
+		err := cmd.Run()
+		if err == nil {
+			t.Fatal("expected error for unsupported output format")
+		}
+	})
+}
+
+func TestMigrateJSONOutput(t *testing.T) {
+	binaryPath := findBinary(t)
+	ensureCluster(t)
+
+	t.Run("outputs JSON with -o json", func(t *testing.T) {
+		manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: test\n"
+		file := writeTestManifest(t, "deploy-json.yaml", manifest)
+
+		cmd := exec.Command(binaryPath, "migrate", "-o", "json", file)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("migrate -o json failed: %v\nstderr: %s", err, stderr.String())
+		}
+		output := stdout.String()
+		if !strings.HasPrefix(strings.TrimSpace(output), "[") {
+			t.Errorf("expected JSON array, got: %.50s", output)
+		}
+		if !strings.Contains(output, `"status"`) {
+			t.Error("JSON output missing status field")
+		}
+		if !strings.Contains(output, `"OK"`) {
+			t.Error("JSON output missing OK status")
+		}
+	})
+
+	t.Run("JSON output includes file and kind", func(t *testing.T) {
+		manifest := "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n"
+		file := writeTestManifest(t, "svc-json.yaml", manifest)
+
+		cmd := exec.Command(binaryPath, "migrate", "-o", "json", file)
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("migrate -o json failed: %v", err)
+		}
+		output := stdout.String()
+		if !strings.Contains(output, `"kind": "Service"`) {
+			t.Errorf("JSON missing kind field\ngot: %s", output)
+		}
+		if !strings.Contains(output, `"name": "web"`) {
+			t.Errorf("JSON missing name field\ngot: %s", output)
+		}
+	})
+}
+
+func TestMigrateStdin(t *testing.T) {
+	binaryPath := findBinary(t)
+	ensureCluster(t)
+
+	t.Run("reads from stdin with dash argument", func(t *testing.T) {
+		manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: test\n"
+		cmd := exec.Command(binaryPath, "migrate", "-")
+		cmd.Stdin = strings.NewReader(manifest)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("migrate - failed: %v\nstderr: %s", err, stderr.String())
+		}
+		output := stdout.String()
+		if !strings.Contains(output, "OK") {
+			t.Errorf("expected OK status from stdin\ngot: %s", output)
+		}
+		if !strings.Contains(output, "<stdin>") {
+			t.Errorf("expected <stdin> in file path\ngot: %s", output)
+		}
+	})
+}
+
+func TestMigrateExitCodes(t *testing.T) {
+	binaryPath := findBinary(t)
+	ensureCluster(t)
+
+	t.Run("exit 0 for current APIs", func(t *testing.T) {
+		manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: test\n"
+		file := writeTestManifest(t, "current.yaml", manifest)
+
+		cmd := exec.Command(binaryPath, "migrate", file)
+		err := cmd.Run()
+		if err != nil {
+			t.Errorf("expected exit 0 for current APIs, got: %v", err)
+		}
+	})
+
+	t.Run("non-zero exit for removed APIs", func(t *testing.T) {
+		manifest := "apiVersion: extensions/v1beta1\nkind: Deployment\nmetadata:\n  name: test\n"
+		file := writeTestManifest(t, "removed.yaml", manifest)
+
+		cmd := exec.Command(binaryPath, "migrate", file)
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		err := cmd.Run()
+		if err == nil {
+			t.Fatal("expected non-zero exit for removed APIs")
+		}
+	})
+}
+
 func TestScaffoldSingleResource(t *testing.T) {
 	binaryPath := findBinary(t)
 	ensureCluster(t)

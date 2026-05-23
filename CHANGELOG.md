@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.5.0
+
+Released: 2026-05-23
+
+ENHANCEMENTS:
+
+- **Migrate structured output** (`migrate --output json` / `-o json`): Emit results as a JSON array with file, apiVersion, kind, name, status, and replacement fields. Useful for CI dashboards, `jq` pipelines, and programmatic consumption.
+- **Version info**: `--version` now displays commit hash and build date when built via GoReleaser (e.g. `v0.5.0 (commit abc1234, built 2026-05-23T18:00:00Z)`).
+- `Makefile`: add `test-coverage` target for generating coverage reports.
+
+TESTING:
+
+- Add e2e tests for `manifest --output json` (valid JSON, dry-run validation, unsupported format error).
+- Add e2e tests for `migrate --output json` (structured output, field presence).
+- Add e2e tests for `migrate -` stdin support (piped input, `<stdin>` path display).
+- Add e2e tests for migrate exit codes (exit 0 for current, non-zero for removed APIs).
+- All e2e tests validated locally against kind v1.33.0 before tagging.
+
 ## v0.4.0
 
 Released: 2026-05-23

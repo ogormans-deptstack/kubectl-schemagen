@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +35,7 @@ func (e *exitCode) ExitCode() int {
 
 func NewCommand() *cobra.Command {
 	var kubeconfig string
+	var outputFormat string
 
 	cmd := &cobra.Command{
 		Use:   "migrate [FILE...]",
@@ -51,20 +53,32 @@ Exit codes:
   2  Deprecated APIs found (none removed)`,
 		Example: `  kubectl schemagen migrate deployment.yaml
   kubectl schemagen migrate manifests/*.yaml
+  kubectl schemagen migrate -o json deployment.yaml
   kubectl get all -o yaml | kubectl schemagen migrate -`,
 		Aliases: []string{"mig"},
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMigrate(args, kubeconfig)
+			return runMigrate(args, kubeconfig, outputFormat)
 		},
 	}
 
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text, json)")
 
 	return cmd
 }
 
-func runMigrate(files []string, kubeconfig string) error {
+// migrateOutput is the JSON-serializable output for a single result.
+type migrateOutput struct {
+	File        string `json:"file"`
+	APIVersion  string `json:"apiVersion"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name,omitempty"`
+	Status      string `json:"status"`
+	Replacement string `json:"replacement,omitempty"`
+}
+
+func runMigrate(files []string, kubeconfig, outputFormat string) error {
 	available, err := cli.LoadAvailableAPIs(kubeconfig)
 	if err != nil {
 		return err
@@ -72,15 +86,17 @@ func runMigrate(files []string, kubeconfig string) error {
 
 	hasDeprecated := false
 	hasRemoved := false
+	var jsonResults []migrateOutput
 
 	for _, path := range files {
 		var data []byte
+		displayPath := path
 		if path == "-" {
 			data, err = io.ReadAll(os.Stdin)
 			if err != nil {
 				return fmt.Errorf("read stdin: %w", err)
 			}
-			path = "<stdin>"
+			displayPath = "<stdin>"
 		} else {
 			data, err = os.ReadFile(path)
 			if err != nil {
@@ -90,24 +106,38 @@ func runMigrate(files []string, kubeconfig string) error {
 
 		results, err := migrate.AnalyzeBytes(data, available)
 		if err != nil {
-			return fmt.Errorf("analyze %s: %w", path, err)
+			return fmt.Errorf("analyze %s: %w", displayPath, err)
 		}
 
 		for _, r := range results {
 			switch r.Status {
-			case migrate.StatusOK:
-				fmt.Printf("  OK  %s %s/%s\n", path, r.Manifest.APIVersion, r.Manifest.Kind)
 			case migrate.StatusDeprecated:
-				fmt.Printf(" DEP  %s %s/%s -> %s\n", path, r.Manifest.APIVersion, r.Manifest.Kind, r.Replacement)
 				hasDeprecated = true
 			case migrate.StatusRemoved:
-				if r.Replacement != "" {
-					fmt.Printf(" REM  %s %s/%s -> %s\n", path, r.Manifest.APIVersion, r.Manifest.Kind, r.Replacement)
-				} else {
-					fmt.Printf(" REM  %s %s/%s (no replacement found)\n", path, r.Manifest.APIVersion, r.Manifest.Kind)
-				}
 				hasRemoved = true
 			}
+
+			switch outputFormat {
+			case "json":
+				jsonResults = append(jsonResults, migrateOutput{
+					File:        displayPath,
+					APIVersion:  r.Manifest.APIVersion,
+					Kind:        r.Manifest.Kind,
+					Name:        r.Manifest.Name,
+					Status:      r.Status.String(),
+					Replacement: r.Replacement,
+				})
+			default:
+				printTextResult(displayPath, r)
+			}
+		}
+	}
+
+	if outputFormat == "json" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(jsonResults); err != nil {
+			return fmt.Errorf("encode JSON: %w", err)
 		}
 	}
 
@@ -118,4 +148,19 @@ func runMigrate(files []string, kubeconfig string) error {
 		return &exitCode{code: 2}
 	}
 	return nil
+}
+
+func printTextResult(path string, r migrate.Result) {
+	switch r.Status {
+	case migrate.StatusOK:
+		fmt.Printf("  OK  %s %s/%s\n", path, r.Manifest.APIVersion, r.Manifest.Kind)
+	case migrate.StatusDeprecated:
+		fmt.Printf(" DEP  %s %s/%s -> %s\n", path, r.Manifest.APIVersion, r.Manifest.Kind, r.Replacement)
+	case migrate.StatusRemoved:
+		if r.Replacement != "" {
+			fmt.Printf(" REM  %s %s/%s -> %s\n", path, r.Manifest.APIVersion, r.Manifest.Kind, r.Replacement)
+		} else {
+			fmt.Printf(" REM  %s %s/%s (no replacement found)\n", path, r.Manifest.APIVersion, r.Manifest.Kind)
+		}
+	}
 }
