@@ -1327,10 +1327,222 @@ func TestDotPathOverrides(t *testing.T) {
 	})
 }
 
+// TestSingleDocProducesSameOutput verifies that generating from a single
+// group-version document produces identical output to generating from the
+// full merged document.
+func TestSingleDocProducesSameOutput(t *testing.T) {
+	mergedDoc := loadMergedFixture(t)
+	if mergedDoc == nil {
+		t.Skip("fixtures not available")
+	}
+
+	tests := []struct {
+		resourceType string
+		fixture      string
+	}{
+		{"Deployment", "apis_apps_v1.json"},
+		{"Pod", "api_v1.json"},
+		{"Service", "api_v1.json"},
+		{"CronJob", "apis_batch_v1.json"},
+		{"Ingress", "apis_networking_v1.json"},
+		{"HorizontalPodAutoscaler", "apis_autoscaling_v2.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.resourceType, func(t *testing.T) {
+			fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+			data, err := os.ReadFile(filepath.Join(fixtureDir, tt.fixture))
+			if err != nil {
+				t.Skipf("fixture %s not found: %v", tt.fixture, err)
+			}
+			singleDoc, err := openapi.ParseDocument(data)
+			if err != nil {
+				t.Fatalf("parse fixture: %v", err)
+			}
+
+			mergedGen := NewOpenAPIGenerator(mergedDoc)
+			singleGen := NewOpenAPIGenerator(singleDoc)
+
+			var mergedBuf, singleBuf bytes.Buffer
+			if err := mergedGen.Generate(tt.resourceType, nil, &mergedBuf); err != nil {
+				t.Fatalf("merged generate: %v", err)
+			}
+			if err := singleGen.Generate(tt.resourceType, nil, &singleBuf); err != nil {
+				t.Fatalf("single generate: %v", err)
+			}
+
+			if mergedBuf.String() != singleBuf.String() {
+				t.Errorf("output differs for %s\n--- merged ---\n%s\n--- single ---\n%s",
+					tt.resourceType, mergedBuf.String(), singleBuf.String())
+			}
+		})
+	}
+}
+
 func newTestGenerator(t *testing.T) ResourceGenerator {
 	t.Helper()
 	doc := loadMergedFixture(t)
 	return NewOpenAPIGenerator(doc)
+}
+
+// BenchmarkGenerateFromMergedDoc measures generation when all schemas are
+// merged into one document (the old FetchAll approach).
+func BenchmarkGenerateFromMergedDoc(b *testing.B) {
+	doc := loadMergedFixtureB(b)
+	if doc == nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		gen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := gen.Generate("Deployment", nil, &buf); err != nil {
+			b.Fatalf("generate: %v", err)
+		}
+	}
+}
+
+// BenchmarkGenerateFromSingleDoc measures generation when only the target
+// group-version schema is loaded (the new FetchForResource approach).
+func BenchmarkGenerateFromSingleDoc(b *testing.B) {
+	doc := loadSingleFixtureB(b, "apis_apps_v1.json")
+	if doc == nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		gen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := gen.Generate("Deployment", nil, &buf); err != nil {
+			b.Fatalf("generate: %v", err)
+		}
+	}
+}
+
+// BenchmarkBuildGVKIndexMerged measures the cost of building the GVK index
+// from the full merged document.
+func BenchmarkBuildGVKIndexMerged(b *testing.B) {
+	doc := loadMergedFixtureB(b)
+	if doc == nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		buildGVKIndex(doc)
+	}
+}
+
+// BenchmarkBuildGVKIndexSingle measures the cost of building the GVK index
+// from a single group-version document.
+func BenchmarkBuildGVKIndexSingle(b *testing.B) {
+	doc := loadSingleFixtureB(b, "apis_apps_v1.json")
+	if doc == nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		buildGVKIndex(doc)
+	}
+}
+
+// BenchmarkLoadMergedFixture measures the cost of loading and parsing all
+// fixture files (simulating FetchAll).
+func BenchmarkLoadMergedFixture(b *testing.B) {
+	fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+	if _, err := os.ReadDir(fixtureDir); err != nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		doc := loadMergedFixtureB(b)
+		if doc == nil {
+			b.Fatal("failed to load fixtures")
+		}
+	}
+}
+
+// BenchmarkLoadSingleFixture measures the cost of loading a single fixture
+// file (simulating FetchForResource).
+func BenchmarkLoadSingleFixture(b *testing.B) {
+	fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+	if _, err := os.ReadDir(fixtureDir); err != nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		doc := loadSingleFixtureB(b, "apis_apps_v1.json")
+		if doc == nil {
+			b.Fatal("failed to load fixture")
+		}
+	}
+}
+
+func loadMergedFixtureB(b *testing.B) *openapi.Document {
+	b.Helper()
+	fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+	files, err := os.ReadDir(fixtureDir)
+	if err != nil {
+		return nil
+	}
+
+	merged := map[string]any{
+		"components": map[string]any{
+			"schemas": map[string]any{},
+		},
+	}
+	mergedSchemas := merged["components"].(map[string]any)["schemas"].(map[string]any)
+
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(fixtureDir, f.Name()))
+		if err != nil {
+			b.Fatalf("read fixture %s: %v", f.Name(), err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			b.Fatalf("parse fixture %s: %v", f.Name(), err)
+		}
+		components, _ := doc["components"].(map[string]any)
+		if components == nil {
+			continue
+		}
+		schemas, _ := components["schemas"].(map[string]any)
+		for k, v := range schemas {
+			mergedSchemas[k] = v
+		}
+	}
+
+	data, err := json.Marshal(merged)
+	if err != nil {
+		b.Fatalf("marshal merged doc: %v", err)
+	}
+	doc, err := openapi.ParseDocument(data)
+	if err != nil {
+		b.Fatalf("parse merged doc: %v", err)
+	}
+	return doc
+}
+
+func loadSingleFixtureB(b *testing.B, filename string) *openapi.Document {
+	b.Helper()
+	fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+	data, err := os.ReadFile(filepath.Join(fixtureDir, filename))
+	if err != nil {
+		return nil
+	}
+	doc, err := openapi.ParseDocument(data)
+	if err != nil {
+		b.Fatalf("parse fixture %s: %v", filename, err)
+	}
+	return doc
 }
 
 func loadMergedFixture(t *testing.T) *openapi.Document {

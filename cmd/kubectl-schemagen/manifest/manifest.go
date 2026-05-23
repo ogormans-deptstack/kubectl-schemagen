@@ -40,14 +40,13 @@ The generated manifest includes sensible defaults and can be piped directly to k
 }
 
 func runManifest(args []string, opts *cli.ManifestOptions, list bool) error {
-	doc, err := cli.LoadClusterDoc(opts.Kubeconfig)
-	if err != nil {
-		return err
-	}
-
-	gen := generator.NewOpenAPIGenerator(doc)
-
+	// --list requires all schemas to show every available type.
 	if list {
+		doc, err := cli.LoadClusterDoc(opts.Kubeconfig)
+		if err != nil {
+			return err
+		}
+		gen := generator.NewOpenAPIGenerator(doc)
 		for _, t := range gen.SupportedTypesWithAliases() {
 			fmt.Println(t)
 		}
@@ -58,6 +57,14 @@ func runManifest(args []string, opts *cli.ManifestOptions, list bool) error {
 		return fmt.Errorf("resource type required. Use --list to see available types")
 	}
 
+	// For a single resource type, use targeted fetching to avoid
+	// downloading all 30-50+ group-version schemas.
+	doc, err := cli.LoadResourceSchema(opts.Kubeconfig, args[0])
+	if err != nil {
+		return err
+	}
+
+	gen := generator.NewOpenAPIGenerator(doc)
 	overrides, err := cli.CollectOverrides(opts)
 	if err != nil {
 		return err

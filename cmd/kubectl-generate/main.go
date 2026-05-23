@@ -63,14 +63,13 @@ The generated manifest includes sensible defaults and can be piped directly to k
 }
 
 func runGenerate(args []string, opts *options) error {
-	doc, err := loadClusterDoc(opts.kubeconfig)
-	if err != nil {
-		return err
-	}
-
-	gen := generator.NewOpenAPIGenerator(doc)
-
+	// --list requires all schemas to show every available type.
 	if opts.list {
+		doc, err := loadClusterDoc(opts.kubeconfig)
+		if err != nil {
+			return err
+		}
+		gen := generator.NewOpenAPIGenerator(doc)
 		for _, t := range gen.SupportedTypesWithAliases() {
 			fmt.Println(t)
 		}
@@ -81,6 +80,14 @@ func runGenerate(args []string, opts *options) error {
 		return fmt.Errorf("resource type required. Use --list to see available types")
 	}
 
+	// For a single resource type, use targeted fetching to avoid
+	// downloading all group-version schemas.
+	doc, err := loadResourceSchema(opts.kubeconfig, args[0])
+	if err != nil {
+		return err
+	}
+
+	gen := generator.NewOpenAPIGenerator(doc)
 	overrides := collectOverrides(opts)
 	return gen.Generate(args[0], overrides, os.Stdout)
 }
@@ -103,6 +110,29 @@ func collectOverrides(opts *options) map[string]string {
 		}
 	}
 	return overrides
+}
+
+func loadResourceSchema(kubeconfigPath, resourceType string) (*openapi.Document, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		loadingRules.ExplicitPath = kubeconfigPath
+	}
+
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		&clientcmd.ConfigOverrides{},
+	).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("build kubeconfig: %w", err)
+	}
+
+	disc, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("create discovery client: %w", err)
+	}
+
+	fetcher := openapi.NewSchemaFetcher(disc.OpenAPIV3())
+	return fetcher.FetchForResource(resourceType)
 }
 
 func loadClusterDoc(kubeconfigPath string) (*openapi.Document, error) {
