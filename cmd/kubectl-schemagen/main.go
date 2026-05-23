@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -13,8 +14,19 @@ import (
 
 var version = "dev"
 
+// exitCoder is implemented by errors that carry a specific exit code.
+type exitCoder interface {
+	Error() string
+	ExitCode() int
+}
+
 func main() {
 	if err := newRootCommand().Execute(); err != nil {
+		var ec exitCoder
+		if errors.As(err, &ec) {
+			fmt.Fprintf(os.Stderr, "%s\n", ec.Error())
+			os.Exit(ec.ExitCode())
+		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

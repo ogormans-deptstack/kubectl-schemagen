@@ -13,6 +13,7 @@ import (
 func NewCommand() *cobra.Command {
 	var opts cli.ManifestOptions
 	var list bool
+	var outputFormat string
 
 	cmd := &cobra.Command{
 		Use:   "manifest RESOURCE_TYPE",
@@ -21,15 +22,17 @@ func NewCommand() *cobra.Command {
 The generated manifest includes sensible defaults and can be piped directly to kubectl create.`,
 		Example: `  kubectl schemagen manifest pod
   kubectl schemagen manifest deployment --name=web --replicas=3 | kubectl create -f -
+  kubectl schemagen manifest deployment -o json | jq .
   kubectl schemagen manifest --list`,
 		Aliases: []string{"m"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.ReplicasSet = cmd.Flags().Changed("replicas")
-			return runManifest(args, &opts, list)
+			return runManifest(args, &opts, list, outputFormat)
 		},
 	}
 
 	cmd.Flags().BoolVar(&list, "list", false, "List all supported resource types")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml, json)")
 	cmd.Flags().StringVar(&opts.Name, "name", "", "Resource name")
 	cmd.Flags().StringVar(&opts.Image, "image", "", "Container image")
 	cmd.Flags().IntVar(&opts.Replicas, "replicas", 0, "Replica count")
@@ -39,7 +42,7 @@ The generated manifest includes sensible defaults and can be piped directly to k
 	return cmd
 }
 
-func runManifest(args []string, opts *cli.ManifestOptions, list bool) error {
+func runManifest(args []string, opts *cli.ManifestOptions, list bool, outputFormat string) error {
 	// --list requires all schemas to show every available type.
 	if list {
 		doc, err := cli.LoadClusterDoc(opts.Kubeconfig)
@@ -69,5 +72,13 @@ func runManifest(args []string, opts *cli.ManifestOptions, list bool) error {
 	if err != nil {
 		return err
 	}
-	return gen.Generate(args[0], overrides, os.Stdout)
+
+	switch outputFormat {
+	case "json":
+		return gen.GenerateJSON(args[0], overrides, os.Stdout)
+	case "yaml", "":
+		return gen.Generate(args[0], overrides, os.Stdout)
+	default:
+		return fmt.Errorf("unsupported output format %q (use yaml or json)", outputFormat)
+	}
 }

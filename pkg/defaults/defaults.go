@@ -275,14 +275,33 @@ func fieldNameDefaults(field, kind string) (any, bool) {
 func typeDefault(schemaType, format string) any {
 	switch schemaType {
 	case "string":
-		if format == "date-time" {
+		switch format {
+		case "date-time":
 			return "2024-01-01T00:00:00Z"
+		case "date":
+			return "2024-01-01"
+		case "email":
+			return "user@example.com"
+		case "hostname":
+			return "example.com"
+		case "ipv4", "ip":
+			return "192.168.1.1"
+		case "ipv6":
+			return "::1"
+		case "uri", "url":
+			return "https://example.com"
+		case "uuid":
+			return "550e8400-e29b-41d4-a716-446655440000"
+		case "byte":
+			return "ZXhhbXBsZQ=="
+		case "password":
+			return "changeme"
+		case "duration":
+			return "1h0m0s"
+		default:
+			return "example"
 		}
-		return "example"
 	case "integer":
-		if format == "int64" {
-			return 1
-		}
 		return 1
 	case "boolean":
 		return false

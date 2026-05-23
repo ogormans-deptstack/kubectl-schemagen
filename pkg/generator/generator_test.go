@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/defaults"
 	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/openapi"
 )
 
@@ -1325,6 +1326,167 @@ func TestDotPathOverrides(t *testing.T) {
 		})
 		assertContains(t, yaml, "type: Recreate")
 	})
+}
+
+func TestGenerateJSON(t *testing.T) {
+	gen := newTestGenerator(t)
+
+	t.Run("generates valid JSON for Deployment", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := gen.GenerateJSON("Deployment", nil, &buf)
+		if err != nil {
+			t.Fatalf("GenerateJSON: %v", err)
+		}
+		output := buf.String()
+		if !strings.HasPrefix(strings.TrimSpace(output), "{") {
+			t.Errorf("expected JSON object, got: %s", output[:50])
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		if parsed["kind"] != "Deployment" {
+			t.Errorf("expected kind=Deployment, got %v", parsed["kind"])
+		}
+		if parsed["apiVersion"] != "apps/v1" {
+			t.Errorf("expected apiVersion=apps/v1, got %v", parsed["apiVersion"])
+		}
+	})
+}
+
+func TestFormatAwareStringDefaults(t *testing.T) {
+	tests := []struct {
+		format   string
+		expected string
+	}{
+		{"date-time", "2024-01-01T00:00:00Z"},
+		{"date", "2024-01-01"},
+		{"email", "user@example.com"},
+		{"hostname", "example.com"},
+		{"ipv4", "192.168.1.1"},
+		{"ipv6", "::1"},
+		{"uri", "https://example.com"},
+		{"uuid", "550e8400-e29b-41d4-a716-446655440000"},
+		{"byte", "ZXhhbXBsZQ=="},
+		{"password", "changeme"},
+		{"duration", "1h0m0s"},
+		{"", "example"},
+	}
+
+	for _, tt := range tests {
+		t.Run("format="+tt.format, func(t *testing.T) {
+			got := defaults.TypeDefault("string", tt.format)
+			if got != tt.expected {
+				t.Errorf("TypeDefault(string, %q) = %q, want %q", tt.format, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestConstrainedNumericDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		schema   map[string]any
+		expected any
+	}{
+		{
+			"no constraints",
+			map[string]any{"type": "integer"},
+			1,
+		},
+		{
+			"minimum above default",
+			map[string]any{"type": "integer", "minimum": float64(5)},
+			5,
+		},
+		{
+			"exclusiveMinimum",
+			map[string]any{"type": "integer", "exclusiveMinimum": float64(0)},
+			1,
+		},
+		{
+			"exclusiveMinimum at default",
+			map[string]any{"type": "integer", "exclusiveMinimum": float64(1)},
+			2,
+		},
+		{
+			"multipleOf",
+			map[string]any{"type": "integer", "multipleOf": float64(10)},
+			10,
+		},
+		{
+			"minimum with multipleOf",
+			map[string]any{"type": "integer", "minimum": float64(3), "multipleOf": float64(5)},
+			5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := constrainedNumericDefault(tt.schema, "integer", "")
+			if got != tt.expected {
+				t.Errorf("got %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCRDSchemaExampleDefault(t *testing.T) {
+	// Build a minimal CRD document with example and default fields.
+	docJSON := `{
+		"components": {
+			"schemas": {
+				"com.example.stable.v1.Widget": {
+					"type": "object",
+					"x-kubernetes-group-version-kind": [
+						{"group": "stable.example.com", "version": "v1", "kind": "Widget"}
+					],
+					"properties": {
+						"apiVersion": {"type": "string"},
+						"kind": {"type": "string"},
+						"metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+						"spec": {
+							"type": "object",
+							"properties": {
+								"color": {
+									"type": "string",
+									"example": "blue"
+								},
+								"size": {
+									"type": "integer",
+									"default": 42
+								},
+								"mode": {
+									"type": "string",
+									"enum": ["fast", "slow"],
+									"default": "fast"
+								}
+							},
+							"required": ["color", "size", "mode"]
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	doc, err := openapi.ParseDocument([]byte(docJSON))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	gen := NewOpenAPIGenerator(doc)
+	var buf bytes.Buffer
+	if err := gen.Generate("Widget", nil, &buf); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	yaml := buf.String()
+
+	// CRD example/default should take priority.
+	assertContains(t, yaml, "color: blue")
+	assertContains(t, yaml, "size: 42")
+	assertContains(t, yaml, "mode: fast")
 }
 
 // TestSingleDocProducesSameOutput verifies that generating from a single

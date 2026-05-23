@@ -17,6 +17,7 @@ type OpenAPIGenerator struct {
 	gvkIndex  map[string]openapi.GVK
 	overrides map[string]string
 	inVCT     bool
+	isCRD     bool // true when generating for a CRD (group contains '.')
 }
 
 func NewOpenAPIGenerator(doc *openapi.Document) *OpenAPIGenerator {
@@ -42,6 +43,7 @@ func (g *OpenAPIGenerator) Generate(resourceType string, overrides map[string]st
 	}
 
 	g.overrides = overrides
+	g.isCRD = strings.Contains(gvk.Group, ".")
 	manifest := g.buildManifest(gvk, schema)
 
 	data, err := json.Marshal(manifest)
@@ -55,6 +57,36 @@ func (g *OpenAPIGenerator) Generate(resourceType string, overrides map[string]st
 	}
 
 	_, err = w.Write(yamlOut)
+	return err
+}
+
+// GenerateJSON writes the manifest as indented JSON instead of YAML.
+func (g *OpenAPIGenerator) GenerateJSON(resourceType string, overrides map[string]string, w io.Writer) error {
+	gvk, ok := g.resolveGVK(resourceType)
+	if !ok {
+		suggestions := fuzzy.Suggest(resourceType, g.SupportedTypes(), 3)
+		if len(suggestions) > 0 {
+			return fmt.Errorf("no example available for %q. Did you mean: %s? Try --list", resourceType, strings.Join(suggestions, ", "))
+		}
+		return fmt.Errorf("no example available for %q. Try --list", resourceType)
+	}
+
+	schema, err := g.doc.SchemaForGVK(gvk.Group, gvk.Version, gvk.Kind)
+	if err != nil {
+		return fmt.Errorf("schema lookup failed for %s: %w", gvk.Kind, err)
+	}
+
+	g.overrides = overrides
+	g.isCRD = strings.Contains(gvk.Group, ".")
+	manifest := g.buildManifest(gvk, schema)
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+	data = append(data, '\n')
+
+	_, err = w.Write(data)
 	return err
 }
 
@@ -332,18 +364,38 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 		return nil
 
 	case "string", "integer", "number", "boolean":
+		// User overrides always win.
 		if v, ok := g.overrides[fieldName]; ok {
 			if schemaType == "integer" {
 				return parseIntOrString(v)
 			}
 			return v
 		}
+
+		// For CRDs, schema-provided example/default takes priority
+		// over hardcoded field defaults since CRD authors set these
+		// intentionally for their specific types.
+		if g.isCRD {
+			if v, ok := schemaExample(schema); ok {
+				return v
+			}
+			if v, ok := schemaDefault(schema); ok {
+				return v
+			}
+		}
+
 		if v, ok := defaults.FieldDefault(fieldName, kind); ok {
 			return v
 		}
-		if v, ok := schemaDefault(schema); ok {
-			return v
+
+		// For built-in types, schema defaults come after field defaults
+		// since our hardcoded defaults produce better output.
+		if !g.isCRD {
+			if v, ok := schemaDefault(schema); ok {
+				return v
+			}
 		}
+
 		if schemaType == "string" {
 			if pattern, ok := schema["pattern"].(string); ok {
 				if v := generatePatternExample(pattern); v != "" {
@@ -353,6 +405,11 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 		}
 		if enums := schemaEnums(schema); len(enums) > 0 {
 			return enums[0]
+		}
+
+		// For integers and numbers, respect min/max constraints.
+		if schemaType == "integer" || schemaType == "number" {
+			return constrainedNumericDefault(schema, schemaType, format)
 		}
 		return defaults.TypeDefault(schemaType, format)
 	}
@@ -1047,6 +1104,57 @@ func generatePatternExample(pattern string) string {
 func schemaDefault(schema map[string]any) (any, bool) {
 	val, ok := schema["default"]
 	return val, ok
+}
+
+func schemaExample(schema map[string]any) (any, bool) {
+	val, ok := schema["example"]
+	return val, ok
+}
+
+// constrainedNumericDefault returns an integer or number value that respects
+// the schema's minimum, maximum, exclusiveMinimum, and multipleOf constraints.
+func constrainedNumericDefault(schema map[string]any, schemaType, format string) any {
+	val := 1
+	if min, ok := toFloat64(schema["minimum"]); ok {
+		if val < int(min) {
+			val = int(min)
+		}
+	}
+	if exMin, ok := toFloat64(schema["exclusiveMinimum"]); ok {
+		if val <= int(exMin) {
+			val = int(exMin) + 1
+		}
+	}
+	if max, ok := toFloat64(schema["maximum"]); ok {
+		if val > int(max) {
+			val = int(max)
+		}
+	}
+	if mult, ok := toFloat64(schema["multipleOf"]); ok && mult > 0 {
+		m := int(mult)
+		if val%m != 0 {
+			val = ((val / m) + 1) * m
+		}
+	}
+	if schemaType == "number" {
+		return float64(val)
+	}
+	return val
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	}
+	return 0, false
 }
 
 func hasOneOf(schema map[string]any) bool {

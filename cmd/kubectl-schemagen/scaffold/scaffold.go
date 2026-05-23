@@ -9,6 +9,7 @@ import (
 
 	"github.com/ogormans-deptstack/kubectl-schemagen/internal/cli"
 	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/generator"
+	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/openapi"
 	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/scaffold"
 )
 
@@ -42,7 +43,16 @@ them as a kustomize base directory with a kustomization.yaml file.`,
 }
 
 func runScaffold(resourceTypes []string, opts *cli.ManifestOptions, outputDir string) error {
-	doc, err := cli.LoadClusterDoc(opts.Kubeconfig)
+	var doc *openapi.Document
+	var err error
+
+	// Use targeted fetching for a single resource type to avoid
+	// downloading all group-version schemas unnecessarily.
+	if len(resourceTypes) == 1 {
+		doc, err = cli.LoadResourceSchema(opts.Kubeconfig, resourceTypes[0])
+	} else {
+		doc, err = cli.LoadClusterDoc(opts.Kubeconfig)
+	}
 	if err != nil {
 		return err
 	}
