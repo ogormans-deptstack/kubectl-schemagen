@@ -1489,6 +1489,154 @@ func TestCRDSchemaExampleDefault(t *testing.T) {
 	assertContains(t, yaml, "mode: fast")
 }
 
+func TestGenerateAnnotated(t *testing.T) {
+	gen := newTestGenerator(t)
+
+	t.Run("includes comments for Deployment fields", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := gen.GenerateAnnotated("Deployment", nil, &buf)
+		if err != nil {
+			t.Fatalf("GenerateAnnotated: %v", err)
+		}
+		output := buf.String()
+		// Should contain # comments for well-described fields.
+		if !strings.Contains(output, "#") {
+			t.Error("annotated output has no comments")
+		}
+		// Should still produce valid YAML structure.
+		assertContains(t, output, "apiVersion: apps/v1")
+		assertContains(t, output, "kind: Deployment")
+		assertContains(t, output, "spec:")
+	})
+
+	t.Run("unannotated output has no comments", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := gen.Generate("Deployment", nil, &buf)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		output := buf.String()
+		if strings.Contains(output, "# ") {
+			t.Error("unannotated output should not contain comment lines")
+		}
+	})
+
+	t.Run("CRD annotations include descriptions", func(t *testing.T) {
+		docJSON := `{
+			"components": {
+				"schemas": {
+					"com.example.stable.v1.Gadget": {
+						"type": "object",
+						"x-kubernetes-group-version-kind": [
+							{"group": "stable.example.com", "version": "v1", "kind": "Gadget"}
+						],
+						"properties": {
+							"apiVersion": {"type": "string"},
+							"kind": {"type": "string"},
+							"metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+							"spec": {
+								"type": "object",
+								"properties": {
+									"level": {
+										"type": "string",
+										"description": "The power level of the gadget",
+										"enum": ["low", "medium", "high"]
+									},
+									"count": {
+										"type": "integer",
+										"description": "How many gadgets to create"
+									}
+								},
+								"required": ["level", "count"]
+							}
+						}
+					}
+				}
+			}
+		}`
+
+		doc, err := openapi.ParseDocument([]byte(docJSON))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+
+		crdGen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := crdGen.GenerateAnnotated("Gadget", nil, &buf); err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+
+		output := buf.String()
+		assertContains(t, output, "# The power level of the gadget")
+		assertContains(t, output, "# enum: [low, medium, high]")
+		assertContains(t, output, "# How many gadgets to create")
+	})
+
+	t.Run("annotations map is populated", func(t *testing.T) {
+		docJSON := `{
+			"components": {
+				"schemas": {
+					"com.example.stable.v1.Thing": {
+						"type": "object",
+						"x-kubernetes-group-version-kind": [
+							{"group": "stable.example.com", "version": "v1", "kind": "Thing"}
+						],
+						"properties": {
+							"apiVersion": {"type": "string"},
+							"kind": {"type": "string"},
+							"metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+							"spec": {
+								"type": "object",
+								"properties": {
+									"color": {
+										"type": "string",
+										"description": "Primary color"
+									}
+								},
+								"required": ["color"]
+							}
+						}
+					}
+				}
+			}
+		}`
+
+		doc, err := openapi.ParseDocument([]byte(docJSON))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+
+		thingGen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := thingGen.GenerateAnnotated("Thing", nil, &buf); err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+
+		anns := thingGen.Annotations()
+		if anns == nil {
+			t.Fatal("annotations map is nil")
+		}
+		ann, ok := anns["spec.color"]
+		if !ok {
+			t.Fatalf("missing annotation for spec.color, got keys: %v", mapKeys(anns))
+		}
+		if ann.Description != "Primary color" {
+			t.Errorf("expected description 'Primary color', got %q", ann.Description)
+		}
+		if !ann.Required {
+			t.Error("expected spec.color to be marked required")
+		}
+	})
+}
+
+func mapKeys[K comparable, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // TestSingleDocProducesSameOutput verifies that generating from a single
 // group-version document produces identical output to generating from the
 // full merged document.

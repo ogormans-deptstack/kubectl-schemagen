@@ -12,12 +12,24 @@ import (
 	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/openapi"
 )
 
+// FieldAnnotation holds schema metadata for a single field, used by the
+// annotated YAML emitter to render inline comments.
+type FieldAnnotation struct {
+	Description string
+	Type        string
+	Enums       []string
+	Required    bool
+}
+
 type OpenAPIGenerator struct {
-	doc       *openapi.Document
-	gvkIndex  map[string]openapi.GVK
-	overrides map[string]string
-	inVCT     bool
-	isCRD     bool // true when generating for a CRD (group contains '.')
+	doc         *openapi.Document
+	gvkIndex    map[string]openapi.GVK
+	overrides   map[string]string
+	annotations map[string]FieldAnnotation // dot-path -> annotation
+	annotate    bool                       // whether to collect annotations
+	pathStack   []string                   // current field path during walk
+	inVCT       bool
+	isCRD       bool // true when generating for a CRD (group contains '.')
 }
 
 func NewOpenAPIGenerator(doc *openapi.Document) *OpenAPIGenerator {
@@ -88,6 +100,51 @@ func (g *OpenAPIGenerator) GenerateJSON(resourceType string, overrides map[strin
 
 	_, err = w.Write(data)
 	return err
+}
+
+// GenerateAnnotated writes the manifest as YAML with inline comments
+// showing field descriptions, types, and enum values from the schema.
+func (g *OpenAPIGenerator) GenerateAnnotated(resourceType string, overrides map[string]string, w io.Writer) error {
+	gvk, ok := g.resolveGVK(resourceType)
+	if !ok {
+		suggestions := fuzzy.Suggest(resourceType, g.SupportedTypes(), 3)
+		if len(suggestions) > 0 {
+			return fmt.Errorf("no example available for %q. Did you mean: %s? Try --list", resourceType, strings.Join(suggestions, ", "))
+		}
+		return fmt.Errorf("no example available for %q. Try --list", resourceType)
+	}
+
+	schema, err := g.doc.SchemaForGVK(gvk.Group, gvk.Version, gvk.Kind)
+	if err != nil {
+		return fmt.Errorf("schema lookup failed for %s: %w", gvk.Kind, err)
+	}
+
+	g.overrides = overrides
+	g.isCRD = isCRDGroup(gvk.Group)
+	g.annotate = true
+	g.annotations = make(map[string]FieldAnnotation)
+	g.pathStack = nil
+	manifest := g.buildManifest(gvk, schema)
+	g.annotate = false
+
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+
+	yamlOut, err := jsonToAnnotatedYAML(data, g.annotations)
+	if err != nil {
+		return fmt.Errorf("convert to annotated YAML: %w", err)
+	}
+
+	_, err = w.Write(yamlOut)
+	return err
+}
+
+// Annotations returns the collected field annotations from the last
+// GenerateAnnotated call. This is primarily useful for testing.
+func (g *OpenAPIGenerator) Annotations() map[string]FieldAnnotation {
+	return g.annotations
 }
 
 func (g *OpenAPIGenerator) SupportedTypes() []string {
@@ -162,7 +219,9 @@ func (g *OpenAPIGenerator) buildManifest(gvk openapi.GVK, schema map[string]any)
 		return manifest.toMap()
 	}
 
+	g.pushPath("spec")
 	spec := g.walkSchema(specSchema, gvk.Kind, 0)
+	g.popPath()
 	if spec != nil {
 		g.injectTemplateLabels(spec, name)
 		g.injectTemplateRestartPolicy(spec, gvk.Kind)
@@ -286,6 +345,7 @@ func (g *OpenAPIGenerator) walkSchema(schema map[string]any, kind string, depth 
 		val := g.generateValue(fieldName, resolvedField, kind, depth)
 		if val != nil {
 			result[fieldName] = val
+			g.recordAnnotation(fieldName, resolvedField, isRequired)
 		}
 	}
 
@@ -328,7 +388,9 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 			}
 			return m
 		}
+		g.pushPath(fieldName)
 		sub := g.walkSchema(schema, kind, depth+1)
+		g.popPath()
 		if sub == nil {
 			return nil
 		}
@@ -352,7 +414,9 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 			if isVCT {
 				g.inVCT = true
 			}
+			g.pushPath(fieldName + "[]")
 			elem := g.walkSchema(resolved, kind, depth+1)
+			g.popPath()
 			if isVCT {
 				g.inVCT = false
 			}
@@ -414,6 +478,59 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 		return defaults.TypeDefault(schemaType, format)
 	}
 	return nil
+}
+
+func (g *OpenAPIGenerator) pushPath(segment string) {
+	if g.annotate {
+		g.pathStack = append(g.pathStack, segment)
+	}
+}
+
+func (g *OpenAPIGenerator) popPath() {
+	if g.annotate && len(g.pathStack) > 0 {
+		g.pathStack = g.pathStack[:len(g.pathStack)-1]
+	}
+}
+
+func (g *OpenAPIGenerator) currentPath(fieldName string) string {
+	parts := make([]string, 0, len(g.pathStack)+1)
+	parts = append(parts, g.pathStack...)
+	parts = append(parts, fieldName)
+	return strings.Join(parts, ".")
+}
+
+func (g *OpenAPIGenerator) recordAnnotation(fieldName string, schema map[string]any, isRequired bool) {
+	if !g.annotate {
+		return
+	}
+	path := g.currentPath(fieldName)
+	desc, _ := schema["description"].(string)
+	fieldType := openapi.SchemaType(schema)
+	format, _ := schema["format"].(string)
+	if format != "" {
+		fieldType = fieldType + " (" + format + ")"
+	}
+	enums := schemaEnums(schema)
+
+	// Only record if there's useful metadata.
+	if desc == "" && len(enums) == 0 {
+		return
+	}
+
+	// Clean description: collapse newlines and trim for single-line comments.
+	desc = strings.ReplaceAll(desc, "\n", " ")
+	desc = strings.Join(strings.Fields(desc), " ")
+	// Truncate long descriptions to keep comments readable.
+	if len(desc) > 120 {
+		desc = desc[:117] + "..."
+	}
+
+	g.annotations[path] = FieldAnnotation{
+		Description: desc,
+		Type:        fieldType,
+		Enums:       enums,
+		Required:    isRequired,
+	}
 }
 
 func (g *OpenAPIGenerator) resourceQuantityDefaults(fieldName, kind string) map[string]any {

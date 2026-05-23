@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.6.0
+
+Released: 2026-05-23
+
+ENHANCEMENTS:
+
+- **Annotated YAML output** (`manifest --annotate`): Generate manifests with inline YAML comments showing field descriptions and enum values from the OpenAPI schema. Makes generated output self-documenting -- users can understand each field without switching to `kubectl explain`. Comments are truncated to 120 characters for readability, newlines collapsed to single lines. Off by default to keep clean output for piping to `kubectl create`.
+- Add `GenerateAnnotated` to `ResourceGenerator` interface.
+
+TESTING:
+
+- Add unit tests for annotated output: comment presence, CRD descriptions, enum annotations, annotation map population.
+- Add e2e tests for `--annotate` flag: comment presence, enum comments, no comments without flag.
+- All e2e tests validated locally against kind v1.33.0 before tagging.
+
 ## v0.5.0
 
 Released: 2026-05-23

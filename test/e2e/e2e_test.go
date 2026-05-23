@@ -1162,6 +1162,57 @@ func TestManifestJSONOutput(t *testing.T) {
 	})
 }
 
+func TestManifestAnnotated(t *testing.T) {
+	binaryPath := findBinary(t)
+	ensureCluster(t)
+
+	t.Run("annotated output includes comments", func(t *testing.T) {
+		cmd := exec.Command(binaryPath, "manifest", "Deployment", "--annotate")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("manifest --annotate failed: %v\nstderr: %s", err, stderr.String())
+		}
+		output := stdout.String()
+		if !strings.Contains(output, "# ") {
+			t.Error("annotated output missing comments")
+		}
+		// Still valid YAML structure.
+		assertYAMLContains(t, output, "apiVersion: apps/v1")
+		assertYAMLContains(t, output, "kind: Deployment")
+	})
+
+	t.Run("annotated output includes enum comments", func(t *testing.T) {
+		cmd := exec.Command(binaryPath, "manifest", "Deployment", "--annotate")
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("manifest --annotate failed: %v", err)
+		}
+		output := stdout.String()
+		if !strings.Contains(output, "# enum:") {
+			t.Error("annotated output missing enum comments for strategy type")
+		}
+	})
+
+	t.Run("unannotated output has no comments", func(t *testing.T) {
+		cmd := exec.Command(binaryPath, "manifest", "Deployment")
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("manifest failed: %v", err)
+		}
+		output := stdout.String()
+		for _, line := range strings.Split(output, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "# ") {
+				t.Errorf("unannotated output contains comment line: %s", line)
+			}
+		}
+	})
+}
+
 func TestMigrateJSONOutput(t *testing.T) {
 	binaryPath := findBinary(t)
 	ensureCluster(t)
