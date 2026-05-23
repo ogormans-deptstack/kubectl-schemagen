@@ -43,7 +43,7 @@ func (g *OpenAPIGenerator) Generate(resourceType string, overrides map[string]st
 	}
 
 	g.overrides = overrides
-	g.isCRD = strings.Contains(gvk.Group, ".")
+	g.isCRD = isCRDGroup(gvk.Group)
 	manifest := g.buildManifest(gvk, schema)
 
 	data, err := json.Marshal(manifest)
@@ -77,7 +77,7 @@ func (g *OpenAPIGenerator) GenerateJSON(resourceType string, overrides map[strin
 	}
 
 	g.overrides = overrides
-	g.isCRD = strings.Contains(gvk.Group, ".")
+	g.isCRD = isCRDGroup(gvk.Group)
 	manifest := g.buildManifest(gvk, schema)
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
@@ -1216,6 +1216,23 @@ func (g *OpenAPIGenerator) resolveDiscriminatedUnions(result map[string]any, pro
 			result[siblingName] = val
 		}
 	}
+}
+
+// isCRDGroup returns true if the API group belongs to a custom resource
+// definition (not a built-in Kubernetes API group). Built-in groups either
+// have no dots (core ""), end with ".k8s.io", or are well-known system groups.
+func isCRDGroup(group string) bool {
+	if group == "" {
+		return false
+	}
+	if !strings.Contains(group, ".") {
+		return false
+	}
+	// Built-in K8s API groups end with .k8s.io
+	if strings.HasSuffix(group, ".k8s.io") {
+		return false
+	}
+	return true
 }
 
 func lowerFirst(s string) string {
