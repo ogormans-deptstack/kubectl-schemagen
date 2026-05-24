@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.6.1
+
+Released: 2026-05-24
+
+BUG FIXES:
+
+- **Fix annotations missing inside arrays**: Annotation paths used `[]` suffixes that didn't match the YAML renderer's key traversal, causing comments for fields inside arrays (e.g. container image, ports) to silently not render. Removed `[]` from path tracking so annotations now appear correctly for array-nested fields.
+- **Fix potential negative indent in annotated YAML**: Clamp indent level to 0 when rendering annotation comments for first array items, preventing a negative `strings.Repeat` argument.
+
+ENHANCEMENTS:
+
+- **Migrate JSON output includes namespace**: The `migrate -o json` output now includes a `namespace` field (omitted when empty) so multi-namespace manifests can be distinguished.
+- **Type hints in annotated output**: When a field has enum values or no description, annotated YAML now renders a `# type: <type>` comment as a hint.
+
+TESTING:
+
+- Add test verifying annotations render correctly for fields nested inside array items.
+
 ## v0.6.0
 
 Released: 2026-05-23

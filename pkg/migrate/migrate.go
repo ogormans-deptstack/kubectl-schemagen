@@ -35,6 +35,7 @@ type Manifest struct {
 	Group      string
 	Version    string
 	Name       string
+	Namespace  string
 }
 
 type Result struct {
@@ -76,6 +77,7 @@ func ParseManifests(data []byte) ([]Manifest, error) {
 		apiVersion, _ := raw["apiVersion"].(string)
 		kind, _ := raw["kind"].(string)
 		name := extractName(raw)
+		namespace := extractNamespace(raw)
 		group, version := splitAPIVersion(apiVersion)
 
 		manifests = append(manifests, Manifest{
@@ -84,6 +86,7 @@ func ParseManifests(data []byte) ([]Manifest, error) {
 			Group:      group,
 			Version:    version,
 			Name:       name,
+			Namespace:  namespace,
 		})
 	}
 
@@ -170,4 +173,13 @@ func extractName(raw map[string]any) string {
 	}
 	name, _ := meta["name"].(string)
 	return name
+}
+
+func extractNamespace(raw map[string]any) string {
+	meta, ok := raw["metadata"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	ns, _ := meta["namespace"].(string)
+	return ns
 }

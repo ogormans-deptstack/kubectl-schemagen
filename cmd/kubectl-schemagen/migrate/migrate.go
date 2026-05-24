@@ -74,6 +74,7 @@ type migrateOutput struct {
 	APIVersion  string `json:"apiVersion"`
 	Kind        string `json:"kind"`
 	Name        string `json:"name,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
 	Status      string `json:"status"`
 	Replacement string `json:"replacement,omitempty"`
 }
@@ -124,6 +125,7 @@ func runMigrate(files []string, kubeconfig, outputFormat string) error {
 					APIVersion:  r.Manifest.APIVersion,
 					Kind:        r.Manifest.Kind,
 					Name:        r.Manifest.Name,
+					Namespace:   r.Manifest.Namespace,
 					Status:      r.Status.String(),
 					Replacement: r.Replacement,
 				})

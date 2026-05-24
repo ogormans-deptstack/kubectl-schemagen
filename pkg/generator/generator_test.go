@@ -1627,6 +1627,66 @@ func TestGenerateAnnotated(t *testing.T) {
 			t.Error("expected spec.color to be marked required")
 		}
 	})
+
+	t.Run("annotations render inside array items", func(t *testing.T) {
+		docJSON := `{
+			"components": {
+				"schemas": {
+					"com.example.stable.v1.App": {
+						"type": "object",
+						"x-kubernetes-group-version-kind": [
+							{"group": "stable.example.com", "version": "v1", "kind": "App"}
+						],
+						"properties": {
+							"apiVersion": {"type": "string"},
+							"kind": {"type": "string"},
+							"metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+							"spec": {
+								"type": "object",
+								"properties": {
+									"containers": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"name": {"type": "string", "description": "Container name"},
+												"image": {"type": "string", "description": "Docker image to run"}
+											},
+											"required": ["name", "image"]
+										}
+									}
+								},
+								"required": ["containers"]
+							}
+						}
+					}
+				}
+			}
+		}`
+
+		doc, err := openapi.ParseDocument([]byte(docJSON))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+
+		appGen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := appGen.GenerateAnnotated("App", nil, &buf); err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+
+		output := buf.String()
+		assertContains(t, output, "# Container name")
+		assertContains(t, output, "# Docker image to run")
+
+		anns := appGen.Annotations()
+		if _, ok := anns["spec.containers.name"]; !ok {
+			t.Errorf("missing annotation for spec.containers.name, got keys: %v", mapKeys(anns))
+		}
+		if _, ok := anns["spec.containers.image"]; !ok {
+			t.Errorf("missing annotation for spec.containers.image, got keys: %v", mapKeys(anns))
+		}
+	})
 }
 
 func mapKeys[K comparable, V any](m map[K]V) []K {

@@ -4,7 +4,7 @@
 Output demo.gif
 Output demo.mp4
 
-Set Shell zsh
+Set Shell bash
 Set FontSize 15
 Set Width 1000
 Set Height 650
@@ -42,6 +42,11 @@ Type "kubectl schemagen manifest HTTPRoute --name=api"
 Enter
 Sleep 4s
 
+# Detect deprecated APIs
+Type "kubectl schemagen migrate old-ingress.yaml || true"
+Enter
+Sleep 3s
+
 # Scaffold: generate a kustomize base
 Type "kubectl schemagen scaffold Deployment Service --name=web -o /tmp/demo-base && ls /tmp/demo-base/"
 Enter
@@ -49,6 +54,11 @@ Sleep 3s
 
 # Pipe to kubectl apply --dry-run
 Type "kubectl schemagen manifest Service --name=web | kubectl apply --dry-run=server -f -"
+Enter
+Sleep 3s
+
+# Install via krew
+Type "kubectl krew install schemagen"
 Enter
 Sleep 3s
 

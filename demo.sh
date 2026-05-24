@@ -91,6 +91,10 @@ run "kubectl schemagen scaffold Deployment Service --name=web" "kubectl schemage
 comment "Pipe directly to kubectl apply for validation"
 run "kubectl schemagen manifest Service --name=web | kubectl apply --dry-run=server -f -"
 
+comment "Install via krew (recommended)"
+run "kubectl krew install schemagen" "echo 'Updated the local copy of plugin index.\nInstalling plugin: schemagen\nInstalled plugin: schemagen\nv0.6.1'"
+
 echo ""
-echo -e "${GREEN}Done! Install: git clone https://github.com/ogormans-deptstack/kubectl-schemagen && make install${NC}"
+echo -e "${GREEN}Done! Install via krew: kubectl krew install schemagen${NC}"
+echo -e "${GREEN}Or from source: git clone https://github.com/ogormans-deptstack/kubectl-schemagen && make install${NC}"
 sleep 3

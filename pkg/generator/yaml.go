@@ -178,7 +178,11 @@ func writeAnnotatedYAML(buf *bytes.Buffer, val any, indent int, inArray bool, pa
 			if ann, ok := annotations[pathStr]; ok {
 				commentPrefix := prefix
 				if i == 0 && inArray {
-					commentPrefix = strings.Repeat("  ", indent-1) + "  "
+					level := indent - 1
+					if level < 0 {
+						level = 0
+					}
+					commentPrefix = strings.Repeat("  ", level) + "  "
 				}
 				writeAnnotationComment(buf, ann, commentPrefix)
 			}
@@ -239,6 +243,9 @@ func writeAnnotationComment(buf *bytes.Buffer, ann FieldAnnotation, prefix strin
 	}
 	if len(ann.Enums) > 0 {
 		fmt.Fprintf(buf, "%s# enum: [%s]\n", prefix, strings.Join(ann.Enums, ", "))
+	} else if ann.Type != "" && ann.Description == "" {
+		// Show type hint only when there's no description (avoid noise).
+		fmt.Fprintf(buf, "%s# type: %s\n", prefix, ann.Type)
 	}
 }
 

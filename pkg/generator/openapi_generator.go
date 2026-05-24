@@ -414,7 +414,7 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 			if isVCT {
 				g.inVCT = true
 			}
-			g.pushPath(fieldName + "[]")
+			g.pushPath(fieldName)
 			elem := g.walkSchema(resolved, kind, depth+1)
 			g.popPath()
 			if isVCT {
