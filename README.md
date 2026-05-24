@@ -8,7 +8,7 @@
 OpenAPI schema-powered Kubernetes tools.
 
 <p align="center">
-  <img src="demo.svg" alt="kubectl-schemagen demo" width="800">
+  <a href="https://asciinema.org/a/1122054"><img src="https://asciinema.org/a/1122054.svg" alt="kubectl-schemagen demo" width="800"></a>
 </p>
 
 `kubectl-schemagen` reads the live OpenAPI v3 spec from your cluster and provides three tools: manifest generation, API migration detection, and kustomize scaffolding. It works with any resource type the cluster knows about, including CRDs.

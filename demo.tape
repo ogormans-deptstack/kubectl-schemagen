@@ -18,7 +18,7 @@ Enter
 Sleep 1.5s
 
 # Show available types
-Type "kubectl schemagen manifest --list | head -20"
+Type "kubectl schemagen manifest --list | head -15"
 Enter
 Sleep 3s
 
@@ -27,13 +27,8 @@ Type "kubectl schemagen manifest Deployment --name=web --image=myapp:v2 --replic
 Enter
 Sleep 4s
 
-# Fuzzy matching on typo
-Type "kubectl schemagen manifest Deploymnet"
-Enter
-Sleep 3s
-
 # Annotated output
-Type "kubectl schemagen manifest Service --name=web --annotate | head -25"
+Type "kubectl schemagen manifest Service --name=web --annotate | head -20"
 Enter
 Sleep 4s
 
@@ -47,13 +42,8 @@ Type "kubectl schemagen manifest HTTPRoute --name=api"
 Enter
 Sleep 4s
 
-# Migrate: check for deprecated APIs
-Type "kubectl schemagen migrate deployment.yaml"
-Enter
-Sleep 3s
-
 # Scaffold: generate a kustomize base
-Type "kubectl schemagen scaffold Deployment Service --name=web -o ./demo-base"
+Type "kubectl schemagen scaffold Deployment Service --name=web -o /tmp/demo-base && ls /tmp/demo-base/"
 Enter
 Sleep 3s
 
