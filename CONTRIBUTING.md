@@ -1,6 +1,6 @@
-# Contributing to kubectl-generate
+# Contributing to kubectl-schemagen
 
-Thank you for your interest in contributing to kubectl-generate. This document covers the process for contributing to this project.
+Thank you for your interest in contributing to kubectl-schemagen. This document covers the process for contributing to this project.
 
 ## Getting Started
 
@@ -14,7 +14,7 @@ Thank you for your interest in contributing to kubectl-generate. This document c
 
 ```bash
 git clone https://github.com/ogormans-deptstack/kubectl-schemagen.git
-cd kubectl-generate
+cd kubectl-schemagen
 make build
 ```
 
@@ -40,7 +40,7 @@ make test-e2e
 
 - Check [existing issues](https://github.com/ogormans-deptstack/kubectl-schemagen/issues) before opening a new one
 - Use the issue templates (bug report, feature request, CRD request)
-- Include the output of `kubectl generate --version` and your Kubernetes version
+- Include the output of `kubectl schemagen --version` and your Kubernetes version
 
 ### Submitting Changes
 

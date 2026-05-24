@@ -1,6 +1,6 @@
 # Override System
 
-This document describes how `--set` overrides interact with the post-processor pipeline in kubectl-generate.
+This document describes how `--set` overrides interact with the post-processor pipeline in kubectl-schemagen.
 
 ## Override Priority
 
@@ -18,13 +18,13 @@ The `--set` flag supports dot-separated paths for nested fields:
 
 ```bash
 # Set a deeply nested field
-kubectl generate Job --set spec.template.spec.restartPolicy=OnFailure
+kubectl schemagen manifest Job --set spec.template.spec.restartPolicy=OnFailure
 
 # Array indexing
-kubectl generate Deployment --set containers[0].image=myapp:v2
+kubectl schemagen manifest Deployment --set containers[0].image=myapp:v2
 
 # The leading spec. prefix is optional (we're already inside spec)
-kubectl generate Deployment --set template.spec.containers[0].image=myapp:v2
+kubectl schemagen manifest Deployment --set template.spec.containers[0].image=myapp:v2
 ```
 
 ## Post-Processor Reference
@@ -52,7 +52,7 @@ Prior to v0.2.1, `applyOverrides()` ran before post-processors. This meant post-
 
 ```bash
 # Before v0.2.1: restartPolicy was set to OnFailure, then overwritten back to Never
-kubectl generate Job --set spec.template.spec.restartPolicy=OnFailure
+kubectl schemagen manifest Job --set spec.template.spec.restartPolicy=OnFailure
 ```
 
 Fixed by moving `applyOverrides()` to run after all post-processors. See [#3](https://github.com/ogormans-deptstack/kubectl-schemagen/issues/3).

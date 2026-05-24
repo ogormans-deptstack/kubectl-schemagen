@@ -1,4 +1,4 @@
-# kubectl-generate -- Agent Context
+# kubectl-schemagen -- Agent Context
 
 ## Project
 
@@ -17,7 +17,7 @@ kubectl plugin that generates example YAML from OpenAPI v3 specs. Go module at `
 
 | What | Where |
 |------|-------|
-| CLI entry | `cmd/kubectl-generate/main.go` |
+| CLI entry | `cmd/kubectl-schemagen/main.go` |
 | Generator | `pkg/generator/openapi_generator.go` |
 | YAML emitter | `pkg/generator/yaml.go` |
 | Schema fetcher | `pkg/openapi/fetcher.go` |
@@ -52,7 +52,7 @@ The plugin connects via the discovery API, fetches all OpenAPI v3 group-version 
 
 **Demo output:**
 
-$ kubectl generate Deployment --name=web --image=myapp:v2 --replicas=5
+$ kubectl schemagen manifest Deployment --name=web --image=myapp:v2 --replicas=5
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# demo.sh - Interactive demo of kubectl-generate
+# demo.sh - Interactive demo of kubectl-schemagen
 # Usage: ./demo.sh
 # Screen-record your terminal while this runs (Cmd+Shift+5 on macOS)
 #
 # Requires:
-#   - kubectl-generate installed (make install)
+#   - kubectl-schemagen installed (make install)
 #   - A running Kubernetes cluster (kind create cluster --name demo)
 #   - Gateway API CRDs installed for HTTPRoute demo
 
@@ -43,27 +43,36 @@ comment() {
 
 clear
 
-comment "kubectl-generate: schema-driven YAML from your cluster"
+comment "kubectl-schemagen: OpenAPI schema-powered Kubernetes tools"
 sleep 1
 
-comment "List available resource types (62 and counting)"
-run "kubectl generate --list | head -20" "kubectl generate --list | grep -v 'List$' | grep -v '^API' | grep -vE '^(Binding|Status|DeleteOptions|Scale|SelfSubject|SubjectAccessReview|LocalSubjectAccessReview|ComponentStatus|Event|TokenRequest|TokenReview|WatchEvent|Eviction)$' | head -20"
+comment "List available resource types"
+run "kubectl schemagen manifest --list | head -20" "kubectl schemagen manifest --list | grep -v 'List$' | grep -v '^API' | grep -vE '^(Binding|Status|DeleteOptions|Scale|SelfSubject|SubjectAccessReview|LocalSubjectAccessReview|ComponentStatus|Event|TokenRequest|TokenReview|WatchEvent|Eviction)$' | head -20"
 
 comment "Generate a Deployment with overrides"
-run "kubectl generate Deployment --name=web --image=myapp:v2 --replicas=3"
+run "kubectl schemagen manifest Deployment --name=web --image=myapp:v2 --replicas=3"
 
 comment "Typo? Fuzzy matching suggests the right type"
-run "kubectl generate Deploymnet || true"
+run "kubectl schemagen manifest Deploymnet || true"
 
-comment "Generate a CronJob"
-run "kubectl generate CronJob --name=backup"
+comment "Annotated output with schema descriptions"
+run "kubectl schemagen manifest Service --name=web --annotate | head -25"
+
+comment "JSON output piped to jq"
+run "kubectl schemagen manifest Pod --name=debug -o json | jq '.metadata.name'"
 
 comment "Generate a CRD (Gateway API HTTPRoute)"
-run "kubectl generate HTTPRoute --name=api"
+run "kubectl schemagen manifest HTTPRoute --name=api"
+
+comment "Check manifests for deprecated APIs"
+run "kubectl schemagen migrate deployment.yaml || true"
+
+comment "Scaffold a kustomize base"
+run "kubectl schemagen scaffold Deployment Service --name=web -o /tmp/demo-base && ls /tmp/demo-base/"
 
 comment "Pipe directly to kubectl apply for validation"
-run "kubectl generate Service --name=web | kubectl apply --dry-run=server -f -"
+run "kubectl schemagen manifest Service --name=web | kubectl apply --dry-run=server -f -"
 
 echo ""
-echo -e "${GREEN}Done! Install: kubectl krew install generate${NC}"
+echo -e "${GREEN}Done! Install: git clone https://github.com/ogormans-deptstack/kubectl-schemagen && make install${NC}"
 sleep 3
