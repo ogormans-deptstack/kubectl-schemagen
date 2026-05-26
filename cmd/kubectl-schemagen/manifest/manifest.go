@@ -3,7 +3,9 @@ package manifest
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 
 	"github.com/ogormans-deptstack/kubectl-schemagen/internal/cli"
@@ -63,7 +65,35 @@ func runManifest(args []string, opts *cli.ManifestOptions, list bool, outputForm
 	}
 
 	if len(args) == 0 {
-		return fmt.Errorf("resource type required. Use --list to see available types")
+		// Interactive mode: show a fuzzy-searchable list of resource types.
+		doc, err := cli.LoadClusterDoc(opts.Kubeconfig)
+		if err != nil {
+			return err
+		}
+		gen := generator.NewOpenAPIGenerator(doc)
+		types := gen.SupportedTypesWithAliases()
+
+		prompt := promptui.Select{
+			Label: "Select a resource type",
+			Items: types,
+			Size:  20,
+			Searcher: func(input string, index int) bool {
+				return strings.Contains(
+					strings.ToLower(types[index]),
+					strings.ToLower(input),
+				)
+			},
+		}
+
+		_, selected, err := prompt.Run()
+		if err != nil {
+			return fmt.Errorf("selection cancelled")
+		}
+		// Strip alias suffix if present (e.g. "Deployment (deploy)" -> "Deployment")
+		if idx := strings.Index(selected, " ("); idx != -1 {
+			selected = selected[:idx]
+		}
+		args = []string{selected}
 	}
 
 	// For a single resource type, use targeted fetching to avoid
