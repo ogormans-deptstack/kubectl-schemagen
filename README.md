@@ -350,7 +350,8 @@ This project is in active development, presented at the [sig-cli bi-weekly meeti
 | 1 | Standalone plugin | Working prototype with core types, CRDs, override flags, CI |
 | 2 | Krew distribution | GoReleaser config, krew manifest, submit to [krew-index](https://github.com/kubernetes-sigs/krew-index) |
 | 3 | Expanded CRD coverage | Argo Workflows, Crossplane, Cert-Manager, Istio -- validate heuristics against real-world CRDs |
-| 4 | CLI polish | Descriptive errors for missing required flags, fuzzy matching for flag suggestions, output format options |
+| 4 | CLI polish | Descriptive errors for missing required flags, fuzzy matching for flag suggestions, interactive resource picker, output format options |
+| 4.5 | CRD intelligence | Enum-aware placeholders, constraint display (min/max/pattern), description annotations in generated output |
 | 5 | KEP progression | Target `kubectl alpha example` for v1.37, code moves to `staging/src/k8s.io/kubectl/` |
 | 6 | Beta promotion | `kubectl schemagen` as a top-level subcommand, based on alpha feedback |
 
