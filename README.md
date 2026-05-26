@@ -392,6 +392,12 @@ make test-e2e
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, testing, and pull request guidelines.
 
+## See Also
+
+- **[crd-sample](https://github.com/hegerdes/kubeclt-crd-sample)** -- a focused krew plugin for generating sample manifests from CRDs with enum display, type annotations, and constraint-aware placeholders. If you work primarily with custom resources in restricted environments, crd-sample is a lightweight alternative. We share the goal of making CRD adoption easier -- contributions between projects are welcome.
+- **[creyaml](https://github.com/sahil-lakhwani/kubectl-creyaml)** -- generates custom resource YAML from CRD definitions.
+- **[kubectl explain](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_explain/)** -- built-in kubectl command for exploring resource schemas (complementary -- explains fields, doesn't generate manifests).
+
 ## Community
 
 - **sig-cli** -- this project aligns with [SIG CLI](https://github.com/kubernetes/community/tree/master/sig-cli), the Kubernetes special interest group responsible for kubectl and CLI tooling
