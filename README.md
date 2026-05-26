@@ -260,6 +260,12 @@ pkg/
 
 ## Installation
 
+| Method | Command |
+|--------|---------|
+| **Krew** | `kubectl krew install schemagen` |
+| **Binary** | Download from [GitHub Releases](https://github.com/ogormans-deptstack/kubectl-schemagen/releases), place in `$PATH` |
+| **Source** | `git clone https://github.com/ogormans-deptstack/kubectl-schemagen.git && cd kubectl-schemagen && make install` |
+
 ### From source
 
 ```bash
