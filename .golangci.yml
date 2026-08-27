@@ -14,14 +14,13 @@ linters:
       - linters: [misspell]
         path: _test\.go
 
-linters-settings:
-  gocritic:
-    enabled-checks:
-      - dupImport
-      - ifElseChain
-      - nestingReduce
-      - truncateCmp
-      - unnamedResult
+  settings:
+    gocritic:
+      enabled-checks:
+        - dupImport
+        - nestingReduce
+        - truncateCmp
+        - unnamedResult
 
 formatters:
   enable:

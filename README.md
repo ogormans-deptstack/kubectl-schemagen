@@ -1,16 +1,20 @@
-# kubectl-generate
+# kubectl-schemagen
 
-[![CI](https://github.com/ogormans-deptstack/kubectl-generate/actions/workflows/ci.yml/badge.svg)](https://github.com/ogormans-deptstack/kubectl-generate/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ogormans-deptstack/kubectl-generate)](https://goreportcard.com/report/github.com/ogormans-deptstack/kubectl-generate)
-[![GitHub Release](https://img.shields.io/github/v/release/ogormans-deptstack/kubectl-generate)](https://github.com/ogormans-deptstack/kubectl-generate/releases)
-[![License](https://img.shields.io/github/license/ogormans-deptstack/kubectl-generate)](LICENSE)
+[![CI](https://github.com/ogormans-deptstack/kubectl-schemagen/actions/workflows/ci.yml/badge.svg)](https://github.com/ogormans-deptstack/kubectl-schemagen/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ogormans-deptstack/kubectl-schemagen)](https://goreportcard.com/report/github.com/ogormans-deptstack/kubectl-schemagen)
+[![GitHub Release](https://img.shields.io/github/v/release/ogormans-deptstack/kubectl-schemagen)](https://github.com/ogormans-deptstack/kubectl-schemagen/releases)
+[![License](https://img.shields.io/github/license/ogormans-deptstack/kubectl-schemagen)](LICENSE)
 
-Generate example Kubernetes YAML manifests from your cluster's OpenAPI v3 spec.
+OpenAPI schema-powered Kubernetes tools.
 
-Instead of copy-pasting from documentation or memorizing resource schemas, `kubectl-generate` reads the live OpenAPI spec from your cluster and generates valid, apply-ready YAML for any resource type -- including CRDs.
+<p align="center">
+  <img src="./demo.svg" alt="kubectl-schemagen demo" width="800">
+</p>
+
+`kubectl-schemagen` reads the live OpenAPI v3 spec from your cluster and provides three tools: manifest generation, API migration detection, and kustomize scaffolding. It works with any resource type the cluster knows about, including CRDs.
 
 ```
-$ kubectl generate Deployment --name=web --image=myapp:v2 --replicas=5
+$ kubectl schemagen manifest Deployment --name=web --image=myapp:v2 --replicas=5
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -43,60 +47,40 @@ spec:
               memory: "128Mi"
 ```
 
-## Features
+## Subcommands
 
-- **Dynamic schema-driven generation** -- reads OpenAPI v3 from the connected cluster, so generated YAML always matches the cluster's API version
-- **CRD support** -- generates examples for any installed CRD (Gateway API, CronTab, Argo Workflows, etc.)
-- **Smart field selection** -- required fields are always included; optional fields are included when they're important for a valid resource (strategy, ports, resources)
-- **Sensible defaults** -- `nginx:latest` for images, `RollingUpdate` for strategies, proper label/selector wiring
-- **Override flags** -- `--name`, `--image`, `--replicas`, and `--set key=value` for arbitrary fields
-- **Pipe-friendly** -- output goes to stdout, ready for `kubectl create -f -`
+### manifest (alias: m)
 
-## Installation
-
-### From source
+Generate example YAML from the cluster's OpenAPI spec.
 
 ```bash
-git clone https://github.com/ogormans-deptstack/kubectl-generate.git
-cd kubectl-generate
-make install
-```
+# Basic generation
+kubectl schemagen manifest Deployment
 
-This builds the binary and copies it to `$GOPATH/bin/kubectl-generate`. kubectl discovers it automatically via the `kubectl-` prefix.
+# With overrides
+kubectl schemagen manifest Deployment --name=web --image=myapp:v2 --replicas=3
 
-### Verify
+# Pipe to kubectl
+kubectl schemagen manifest Service --name=web | kubectl create -f -
 
-```bash
-kubectl plugin list
-# Should show: kubectl-generate
+# JSON output
+kubectl schemagen manifest Deployment -o json | jq .
 
-kubectl generate --version
-```
-
-## Usage
-
-```bash
-# Generate a Deployment
-kubectl generate Deployment
-
-# Generate with overrides
-kubectl generate Deployment --name=web --image=myapp:v2 --replicas=3
-
-# Generate and apply
-kubectl generate Service --name=web | kubectl create -f -
-
-# Set arbitrary fields
-kubectl generate StatefulSet --set serviceName=my-svc
-
-# List all available resource types
-kubectl generate --list
+# Annotated output (schema descriptions + enum values as comments)
+kubectl schemagen manifest Deployment --annotate
 
 # Generate a CRD (must be installed in the cluster)
-kubectl generate CronTab
-kubectl generate HTTPRoute
+kubectl schemagen manifest HTTPRoute
+kubectl schemagen manifest CronTab
+
+# Set arbitrary fields
+kubectl schemagen manifest StatefulSet --set serviceName=my-svc
+
+# List all available resource types
+kubectl schemagen manifest --list
 ```
 
-### Flags
+#### Flags
 
 | Flag | Description | Example |
 |------|-------------|---------|
@@ -106,11 +90,90 @@ kubectl generate HTTPRoute
 | `--set` | Arbitrary field override (repeatable) | `--set serviceName=my-svc` |
 | `--kubeconfig` | Path to kubeconfig file | `--kubeconfig=~/.kube/config` |
 | `--list` | List all supported resource types | |
-| `--version` | Print version | |
+| `-o, --output` | Output format (`yaml` or `json`) | `-o json` |
+| `--annotate` | Add schema descriptions as YAML comments | |
 
 The `--set` flag can be repeated and accepts `key=value` pairs. Values containing `=` are handled correctly (`--set annotation=foo=bar` sets `annotation` to `foo=bar`).
 
-Override priority: `--set` overrides take effect after typed flags (`--name`, `--image`, `--replicas`), so `--set name=X` will override `--name=Y`.
+Override priority: `--set` overrides take effect after typed flags (`--name`, `--image`, `--replicas`), so `--set name=X` will override `--name=Y`. This is intentional.
+
+### migrate (alias: mig)
+
+Detect deprecated or removed API versions in YAML manifests.
+
+```bash
+# Check a single file
+kubectl schemagen migrate deployment.yaml
+
+# Check multiple files with glob
+kubectl schemagen migrate manifests/*.yaml
+
+# Read from stdin
+kubectl get deploy -o yaml | kubectl schemagen migrate -
+
+# JSON output
+kubectl schemagen migrate -o json deployment.yaml
+```
+
+#### Flags
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--kubeconfig` | Path to kubeconfig file | `--kubeconfig=~/.kube/config` |
+| `-o, --output` | Output format (`text` or `json`) | `-o json` |
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | All APIs are current |
+| 1 | Removed APIs found |
+| 2 | Deprecated APIs found (none removed) |
+
+This makes `migrate` usable in CI pipelines where you want to gate on API freshness.
+
+### scaffold (alias: sc)
+
+Generate a kustomize base directory from one or more resource types.
+
+```bash
+# Single type
+kubectl schemagen scaffold Deployment
+
+# Multiple types
+kubectl schemagen scaffold Deployment Service ConfigMap
+
+# With overrides and custom output directory
+kubectl schemagen scaffold Deployment --name=web --image=nginx --replicas=3 -o ./k8s/base
+```
+
+Writes each resource as a separate YAML file plus a `kustomization.yaml` into the output directory (default: `base/`).
+
+#### Flags
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--name` | Resource name and label value | `--name=web` |
+| `--image` | Container image | `--image=nginx:1.25` |
+| `--replicas` | Replica count | `--replicas=3` |
+| `--set` | Arbitrary field override (repeatable) | `--set serviceName=my-svc` |
+| `--kubeconfig` | Path to kubeconfig file | `--kubeconfig=~/.kube/config` |
+| `-o, --output-dir` | Output directory for kustomize base | `-o ./base` |
+
+## Features
+
+- **Schema-driven generation from live OpenAPI v3** -- generated YAML always matches the connected cluster's API version
+- **CRD support** -- Gateway API, Argo Workflows, cert-manager, Crossplane, or any custom CRD installed in the cluster
+- **API migration detection** -- finds deprecated and removed API versions, suggests replacements, exits with distinct codes for CI
+- **Kustomize scaffolding** -- generates a ready-to-use kustomize base from resource types
+- **Annotated output** -- `--annotate` adds schema descriptions and enum values as YAML comments
+- **JSON and YAML output** -- switch with `-o json` or `-o yaml`
+- **Targeted schema fetching** -- fetches only the group-version schema needed for a single resource (~12x faster than downloading everything)
+- **Fuzzy matching** -- typos in resource names get suggestions instead of cryptic errors
+- **Smart field selection** -- required fields always included, important optional fields (ports, resources, strategy) included when relevant
+- **Sensible defaults** -- `nginx:latest` for images, `RollingUpdate` for strategies, proper label/selector wiring
+- **Override flags** -- `--name`, `--image`, `--replicas`, and `--set key=value` for arbitrary fields
+- **Pipe-friendly** -- output goes to stdout, ready for `kubectl create -f -`
 
 ## Supported Resources
 
@@ -153,7 +216,7 @@ CRDs tested: CronTab (custom), Gateway API (HTTPRoute, Gateway, GatewayClass, GR
 
 ## How It Works
 
-1. **Fetch** -- Connects to the cluster via kubeconfig and downloads all OpenAPI v3 group-version schemas using the discovery API
+1. **Fetch** -- Connects to the cluster via kubeconfig and fetches the OpenAPI v3 schema. For single-resource operations, only the relevant group-version schema is downloaded (targeted fetching). For `--list` or multi-resource scaffold, all schemas are fetched via the discovery API.
 2. **Resolve** -- Finds the schema for the requested resource type by matching Kind (case-insensitive) against the GVK index
 3. **Walk** -- Recursively walks the schema tree, selecting fields based on:
    - Required fields (always included)
@@ -161,29 +224,62 @@ CRDs tested: CronTab (custom), Gateway API (HTTPRoute, Gateway, GatewayClass, GR
    - Depth limits (avoids deeply nested optional structures)
 4. **Default** -- Fills values using a priority chain: override flags > field-specific defaults > schema defaults > schema patterns > enum first value > type defaults
 5. **Post-process** -- Wires up label/selector consistency, injects restart policies, fixes strategy types, adds service selectors
-6. **Emit** -- Marshals to YAML and writes to stdout
+6. **Emit** -- Marshals to YAML (or JSON) and writes to stdout, or writes files for scaffold
 
 ## Architecture
 
 ```
-cmd/kubectl-generate/
-  main.go              Cobra CLI, flag parsing, override collection
+cmd/kubectl-schemagen/
+  main.go                        Cobra root, version, subcommand registration
+  manifest/manifest.go           manifest subcommand
+  migrate/migrate.go             migrate subcommand
+  scaffold/scaffold.go           scaffold subcommand
+
+internal/cli/
+  client.go                      Cluster connection, schema loading
+  overrides.go                   Override collection from flags
 
 pkg/
   openapi/
-    fetcher.go         OpenAPI v3 schema fetcher (FetchAll via discovery API)
-    openapi.go         Schema resolution, property extraction, allOf merging
+    fetcher.go                   OpenAPI v3 schema fetcher (targeted + full)
+    openapi.go                   Schema resolution, property extraction
 
   generator/
-    generator.go       ResourceGenerator interface
-    openapi_generator.go   Schema walker, field selection, override application
-    yaml.go            JSON-to-YAML conversion
+    openapi_generator.go         Schema walker, field selection, annotated output
+    generator.go                 ResourceGenerator interface
+
+  migrate/
+    migrate.go                   API version analysis, deprecation detection
+
+  scaffold/
+    scaffold.go                  Kustomize base writer
 
   defaults/
-    defaults.go        Field and type defaults, important field registry
+    defaults.go                  Field/type defaults, important field registry
+```
 
-  flags/
-    flags.go           Dynamic flag generation from schema introspection
+## Installation
+
+| Method | Command |
+|--------|---------|
+| **Krew** | `kubectl krew install schemagen` |
+| **Binary** | Download from [GitHub Releases](https://github.com/ogormans-deptstack/kubectl-schemagen/releases), place in `$PATH` |
+| **Source** | `git clone https://github.com/ogormans-deptstack/kubectl-schemagen.git && cd kubectl-schemagen && make install` |
+
+### From source
+
+```bash
+git clone https://github.com/ogormans-deptstack/kubectl-schemagen.git
+cd kubectl-schemagen
+make install
+```
+
+This builds the `kubectl-schemagen` binary and copies it to `$GOPATH/bin/`. kubectl discovers it automatically via the `kubectl-` prefix.
+
+### Verify
+
+```bash
+kubectl schemagen --version
 ```
 
 ## Design Decisions
@@ -204,6 +300,10 @@ excluded := map[string]bool{
     "newfieldname": true,  // K8s X.Y: description of why excluded
 }
 ```
+
+### Subcommand Architecture
+
+v0.6.0 moved from a single flat command to three subcommands (`manifest`, `migrate`, `scaffold`). Each subcommand has its own flag set and can evolve independently. The root command holds only `--version`. This mirrors how tools like `kubectl` and `helm` structure their CLIs and avoids flag collisions as the tool grows.
 
 ### Field Selection Heuristics
 
@@ -233,10 +333,13 @@ Override flags are applied in a fixed order: typed flags (`--name`, `--image`, `
 
 This project is in active development, presented at the [sig-cli bi-weekly meeting](https://github.com/kubernetes/community/tree/master/sig-cli) in April 2026. The related KEP is [kubernetes/enhancements#5576](https://github.com/kubernetes/enhancements/pull/5576), tracking under [enhancement issue #5571](https://github.com/kubernetes/enhancements/issues/5571).
 
-### Current State
+### Current State (v0.6.0)
 
 - 30 core resource types pass server-side dry-run validation
-- CRD support working (Gateway API, CronTab, Argo Workflows, cert-manager, Crossplane)
+- 3 subcommands: `manifest`, `migrate`, `scaffold`
+- Annotated output, JSON output, targeted schema fetching
+- Migrate with exit codes and JSON output for CI integration
+- CRD support (Gateway API, CronTab, Argo Workflows, cert-manager, Crossplane)
 - ~266 unit tests, e2e tests against a kind cluster
 - CI with golangci-lint v2, Go 1.25/1.26 matrix, e2e on kind
 
@@ -247,31 +350,20 @@ This project is in active development, presented at the [sig-cli bi-weekly meeti
 | 1 | Standalone plugin | Working prototype with core types, CRDs, override flags, CI |
 | 2 | Krew distribution | GoReleaser config, krew manifest, submit to [krew-index](https://github.com/kubernetes-sigs/krew-index) |
 | 3 | Expanded CRD coverage | Argo Workflows, Crossplane, Cert-Manager, Istio -- validate heuristics against real-world CRDs |
-| 4 | CLI polish | Descriptive errors for missing required flags, fuzzy matching for flag suggestions, output format options |
+| 4 | CLI polish | Descriptive errors for missing required flags, fuzzy matching for flag suggestions, interactive resource picker, output format options |
+| 4.5 | CRD intelligence | Enum-aware placeholders, constraint display (min/max/pattern), description annotations in generated output |
 | 5 | KEP progression | Target `kubectl alpha example` for v1.37, code moves to `staging/src/k8s.io/kubectl/` |
-| 6 | Beta promotion | `kubectl generate` as a top-level subcommand, based on alpha feedback |
+| 6 | Beta promotion | `kubectl schemagen` as a top-level subcommand, based on alpha feedback |
 
 ### Kubernetes Release Integration
 
 The path from standalone plugin to built-in kubectl subcommand follows the standard KEP graduation process, similar to how `kubectl debug` ([KEP-1441](https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/1441-kubectl-debug)) and `kubectl diff` ([KEP-491](https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/491-kubectl-diff)) progressed:
 
 - **Alpha**: Command gated behind `kubectl alpha example`. Requires KEP at `implementable` status, approved by sig-cli leads, and hitting the Enhancements Freeze for the target release.
-- **Beta**: Promoted to top-level `kubectl generate` after at least one release cycle of alpha feedback, full test coverage, and docs on kubernetes.io.
+- **Beta**: Promoted to a top-level kubectl subcommand after at least one release cycle of alpha feedback, full test coverage, and docs on kubernetes.io.
 - **GA**: Stable after 2+ release cycles at beta, demonstrated real-world usage, and conformance tests where applicable.
 
 For reference, `kubectl debug` took roughly 3 years from KEP to GA (v1.18 alpha to v1.30 stable). `kubectl diff` took about 1.5 years (v1.9 to v1.13). Timeline depends on feedback cycles and community adoption.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, testing, and pull request guidelines.
-
-## Community
-
-- **sig-cli** -- this project aligns with [SIG CLI](https://github.com/kubernetes/community/tree/master/sig-cli), the Kubernetes special interest group responsible for kubectl and CLI tooling
-- **Slack** -- [#sig-cli](https://kubernetes.slack.com/messages/sig-cli) on Kubernetes Slack
-- **Meetings** -- sig-cli holds bi-weekly meetings; see the [community page](https://github.com/kubernetes/community/tree/master/sig-cli) for schedule and agenda
-- **KEP** -- [kubernetes/enhancements#5576](https://github.com/kubernetes/enhancements/pull/5576)
-- **Enhancement Issue** -- [kubernetes/enhancements#5571](https://github.com/kubernetes/enhancements/issues/5571)
 
 ## Development
 
@@ -302,6 +394,24 @@ kubectl apply -f test/fixtures/crontab-crd.yaml
 # Run e2e
 make test-e2e
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, testing, and pull request guidelines.
+
+## See Also
+
+- **[crd-sample](https://github.com/hegerdes/kubeclt-crd-sample)** -- a focused krew plugin for generating sample manifests from CRDs with enum display, type annotations, and constraint-aware placeholders. If you work primarily with custom resources in restricted environments, crd-sample is a lightweight alternative. We share the goal of making CRD adoption easier -- contributions between projects are welcome.
+- **[creyaml](https://github.com/sahil-lakhwani/kubectl-creyaml)** -- generates custom resource YAML from CRD definitions.
+- **[kubectl explain](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_explain/)** -- built-in kubectl command for exploring resource schemas (complementary -- explains fields, doesn't generate manifests).
+
+## Community
+
+- **sig-cli** -- this project aligns with [SIG CLI](https://github.com/kubernetes/community/tree/master/sig-cli), the Kubernetes special interest group responsible for kubectl and CLI tooling
+- **Slack** -- [#sig-cli](https://kubernetes.slack.com/messages/sig-cli) on Kubernetes Slack
+- **Meetings** -- sig-cli holds bi-weekly meetings; see the [community page](https://github.com/kubernetes/community/tree/master/sig-cli) for schedule and agenda
+- **KEP** -- [kubernetes/enhancements#5576](https://github.com/kubernetes/enhancements/pull/5576)
+- **Enhancement Issue** -- [kubernetes/enhancements#5571](https://github.com/kubernetes/enhancements/issues/5571)
 
 ## License
 

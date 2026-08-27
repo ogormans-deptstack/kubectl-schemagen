@@ -12,7 +12,7 @@ variable "github_owner" {
 
 variable "repo_name" {
   type        = string
-  default     = "kubectl-generate"
+  default     = "kubectl-schemagen"
   description = "Name of the GitHub repository"
 }
 

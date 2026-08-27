@@ -1,16 +1,20 @@
 apiVersion: krew.googlecontainertools.github.com/v1alpha2
 kind: Plugin
 metadata:
-  name: generate
+  name: schemagen
 spec:
   version: {{ .TagName }}
-  homepage: https://github.com/ogormans-deptstack/kubectl-generate
-  shortDescription: Generate example YAML manifests from OpenAPI v3 spec
+  homepage: https://github.com/ogormans-deptstack/kubectl-schemagen
+  shortDescription: Generate, migrate, and scaffold Kubernetes resources from cluster schema
   description: |
-    Generate example Kubernetes YAML manifests from your cluster's OpenAPI v3
-    spec. Instead of copy-pasting from documentation or memorizing resource
-    schemas, kubectl-generate reads the live OpenAPI spec and generates valid,
-    apply-ready YAML for any resource type -- including CRDs.
+    A multi-subcommand kubectl plugin driven by the cluster's OpenAPI v3 schema.
+    Generate example manifests, detect deprecated APIs, and scaffold kustomize
+    bases -- all from the live cluster schema.
+
+    Subcommands:
+      manifest  - Generate example YAML for any resource or CRD
+      migrate   - Check manifests for deprecated or removed APIs
+      scaffold  - Generate kustomize bases from resource schemas
   caveats: |
     * Requires a running cluster (reads OpenAPI v3 spec via discovery API)
     * CRD examples require the CRD to be installed in the cluster
@@ -19,29 +23,29 @@ spec:
         matchLabels:
           os: darwin
           arch: amd64
-      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-generate/releases/download/{{ .TagName }}/kubectl-generate_{{ .TagName }}_darwin_amd64.tar.gz" .TagName | indent 6 }}
-      bin: kubectl-generate
+      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-schemagen/releases/download/{{ .TagName }}/kubectl-schemagen_{{ .TagName }}_darwin_amd64.tar.gz" .TagName | indent 6 }}
+      bin: kubectl-schemagen
     - selector:
         matchLabels:
           os: darwin
           arch: arm64
-      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-generate/releases/download/{{ .TagName }}/kubectl-generate_{{ .TagName }}_darwin_arm64.tar.gz" .TagName | indent 6 }}
-      bin: kubectl-generate
+      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-schemagen/releases/download/{{ .TagName }}/kubectl-schemagen_{{ .TagName }}_darwin_arm64.tar.gz" .TagName | indent 6 }}
+      bin: kubectl-schemagen
     - selector:
         matchLabels:
           os: linux
           arch: amd64
-      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-generate/releases/download/{{ .TagName }}/kubectl-generate_{{ .TagName }}_linux_amd64.tar.gz" .TagName | indent 6 }}
-      bin: kubectl-generate
+      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-schemagen/releases/download/{{ .TagName }}/kubectl-schemagen_{{ .TagName }}_linux_amd64.tar.gz" .TagName | indent 6 }}
+      bin: kubectl-schemagen
     - selector:
         matchLabels:
           os: linux
           arch: arm64
-      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-generate/releases/download/{{ .TagName }}/kubectl-generate_{{ .TagName }}_linux_arm64.tar.gz" .TagName | indent 6 }}
-      bin: kubectl-generate
+      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-schemagen/releases/download/{{ .TagName }}/kubectl-schemagen_{{ .TagName }}_linux_arm64.tar.gz" .TagName | indent 6 }}
+      bin: kubectl-schemagen
     - selector:
         matchLabels:
           os: windows
           arch: amd64
-      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-generate/releases/download/{{ .TagName }}/kubectl-generate_{{ .TagName }}_windows_amd64.zip" .TagName | indent 6 }}
-      bin: kubectl-generate.exe
+      {{addURIAndSha "https://github.com/ogormans-deptstack/kubectl-schemagen/releases/download/{{ .TagName }}/kubectl-schemagen_{{ .TagName }}_windows_amd64.zip" .TagName | indent 6 }}
+      bin: kubectl-schemagen.exe

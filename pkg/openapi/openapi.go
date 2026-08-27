@@ -34,6 +34,29 @@ func (d *Document) ComponentSchemas() map[string]any {
 	return schemas
 }
 
+// hasResourceKind checks whether this document contains a schema with the
+// given kind name (case-insensitive). This is used for targeted schema
+// fetching to quickly identify which group-version document contains a
+// requested resource type without building a full GVK index.
+func (d *Document) hasResourceKind(lowerKind string) bool {
+	schemas := d.ComponentSchemas()
+	if schemas == nil {
+		return false
+	}
+	for _, schema := range schemas {
+		schemaMap, ok := schema.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, gvk := range extractGVKs(schemaMap) {
+			if strings.ToLower(gvk.Kind) == lowerKind {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (d *Document) SchemaForGVK(group, version, kind string) (map[string]any, error) {
 	schemas := d.ComponentSchemas()
 	if schemas == nil {

@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ogormans-deptstack/kubectl-generate/pkg/openapi"
+	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/defaults"
+	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/openapi"
 )
 
 func TestResourceGeneratorInterface(t *testing.T) {
@@ -1037,6 +1038,72 @@ func TestAliasResolution(t *testing.T) {
 	}
 }
 
+func TestSupportedTypesWithAliases(t *testing.T) {
+	gen := newTestGenerator(t).(*OpenAPIGenerator)
+
+	t.Run("includes aliases in parentheses for types that have them", func(t *testing.T) {
+		lines := gen.SupportedTypesWithAliases()
+		found := make(map[string]bool)
+		for _, line := range lines {
+			found[line] = true
+		}
+
+		expected := map[string]string{
+			"Deployment":              "deploy",
+			"Service":                 "svc",
+			"ConfigMap":               "cm",
+			"StatefulSet":             "sts",
+			"DaemonSet":               "ds",
+			"PersistentVolumeClaim":   "pvc",
+			"CronJob":                 "cj",
+			"HorizontalPodAutoscaler": "hpa",
+		}
+
+		for kind, alias := range expected {
+			matchFound := false
+			for _, line := range lines {
+				if strings.HasPrefix(line, kind+" (") && strings.Contains(line, alias) {
+					matchFound = true
+					break
+				}
+			}
+			if !matchFound {
+				t.Errorf("expected %s to show alias %q in SupportedTypesWithAliases(), lines: %v", kind, alias, lines)
+			}
+		}
+	})
+
+	t.Run("types without aliases have no parentheses", func(t *testing.T) {
+		lines := gen.SupportedTypesWithAliases()
+		for _, line := range lines {
+			if strings.HasPrefix(line, "CronTab") {
+				if strings.Contains(line, "(") {
+					t.Errorf("CronTab should have no aliases, got: %s", line)
+				}
+			}
+		}
+	})
+
+	t.Run("is sorted alphabetically by kind", func(t *testing.T) {
+		lines := gen.SupportedTypesWithAliases()
+		for i := 1; i < len(lines); i++ {
+			prevKind := strings.SplitN(lines[i-1], " ", 2)[0]
+			currKind := strings.SplitN(lines[i], " ", 2)[0]
+			if prevKind > currKind {
+				t.Errorf("not sorted: %q came before %q", prevKind, currKind)
+			}
+		}
+	})
+
+	t.Run("has same count as SupportedTypes", func(t *testing.T) {
+		plain := gen.SupportedTypes()
+		withAliases := gen.SupportedTypesWithAliases()
+		if len(plain) != len(withAliases) {
+			t.Errorf("SupportedTypes has %d entries but SupportedTypesWithAliases has %d", len(plain), len(withAliases))
+		}
+	})
+}
+
 func TestOverrideEdgeCases(t *testing.T) {
 	gen := newTestGenerator(t)
 
@@ -1261,10 +1328,591 @@ func TestDotPathOverrides(t *testing.T) {
 	})
 }
 
+func TestGenerateJSON(t *testing.T) {
+	gen := newTestGenerator(t)
+
+	t.Run("generates valid JSON for Deployment", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := gen.GenerateJSON("Deployment", nil, &buf)
+		if err != nil {
+			t.Fatalf("GenerateJSON: %v", err)
+		}
+		output := buf.String()
+		if !strings.HasPrefix(strings.TrimSpace(output), "{") {
+			t.Errorf("expected JSON object, got: %s", output[:50])
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		if parsed["kind"] != "Deployment" {
+			t.Errorf("expected kind=Deployment, got %v", parsed["kind"])
+		}
+		if parsed["apiVersion"] != "apps/v1" {
+			t.Errorf("expected apiVersion=apps/v1, got %v", parsed["apiVersion"])
+		}
+	})
+}
+
+func TestFormatAwareStringDefaults(t *testing.T) {
+	tests := []struct {
+		format   string
+		expected string
+	}{
+		{"date-time", "2024-01-01T00:00:00Z"},
+		{"date", "2024-01-01"},
+		{"email", "user@example.com"},
+		{"hostname", "example.com"},
+		{"ipv4", "192.168.1.1"},
+		{"ipv6", "::1"},
+		{"uri", "https://example.com"},
+		{"uuid", "550e8400-e29b-41d4-a716-446655440000"},
+		{"byte", "ZXhhbXBsZQ=="},
+		{"password", "changeme"},
+		{"duration", "1h0m0s"},
+		{"", "example"},
+	}
+
+	for _, tt := range tests {
+		t.Run("format="+tt.format, func(t *testing.T) {
+			got := defaults.TypeDefault("string", tt.format)
+			if got != tt.expected {
+				t.Errorf("TypeDefault(string, %q) = %q, want %q", tt.format, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestConstrainedNumericDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		schema   map[string]any
+		expected any
+	}{
+		{
+			"no constraints",
+			map[string]any{"type": "integer"},
+			1,
+		},
+		{
+			"minimum above default",
+			map[string]any{"type": "integer", "minimum": float64(5)},
+			5,
+		},
+		{
+			"exclusiveMinimum",
+			map[string]any{"type": "integer", "exclusiveMinimum": float64(0)},
+			1,
+		},
+		{
+			"exclusiveMinimum at default",
+			map[string]any{"type": "integer", "exclusiveMinimum": float64(1)},
+			2,
+		},
+		{
+			"multipleOf",
+			map[string]any{"type": "integer", "multipleOf": float64(10)},
+			10,
+		},
+		{
+			"minimum with multipleOf",
+			map[string]any{"type": "integer", "minimum": float64(3), "multipleOf": float64(5)},
+			5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := constrainedNumericDefault(tt.schema, "integer", "")
+			if got != tt.expected {
+				t.Errorf("got %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCRDSchemaExampleDefault(t *testing.T) {
+	// Build a minimal CRD document with example and default fields.
+	docJSON := `{
+		"components": {
+			"schemas": {
+				"com.example.stable.v1.Widget": {
+					"type": "object",
+					"x-kubernetes-group-version-kind": [
+						{"group": "stable.example.com", "version": "v1", "kind": "Widget"}
+					],
+					"properties": {
+						"apiVersion": {"type": "string"},
+						"kind": {"type": "string"},
+						"metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+						"spec": {
+							"type": "object",
+							"properties": {
+								"color": {
+									"type": "string",
+									"example": "blue"
+								},
+								"size": {
+									"type": "integer",
+									"default": 42
+								},
+								"mode": {
+									"type": "string",
+									"enum": ["fast", "slow"],
+									"default": "fast"
+								}
+							},
+							"required": ["color", "size", "mode"]
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	doc, err := openapi.ParseDocument([]byte(docJSON))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	gen := NewOpenAPIGenerator(doc)
+	var buf bytes.Buffer
+	if err := gen.Generate("Widget", nil, &buf); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	yaml := buf.String()
+
+	// CRD example/default should take priority.
+	assertContains(t, yaml, "color: blue")
+	assertContains(t, yaml, "size: 42")
+	assertContains(t, yaml, "mode: fast")
+}
+
+func TestGenerateAnnotated(t *testing.T) {
+	gen := newTestGenerator(t)
+
+	t.Run("includes comments for Deployment fields", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := gen.GenerateAnnotated("Deployment", nil, &buf)
+		if err != nil {
+			t.Fatalf("GenerateAnnotated: %v", err)
+		}
+		output := buf.String()
+		// Should contain # comments for well-described fields.
+		if !strings.Contains(output, "#") {
+			t.Error("annotated output has no comments")
+		}
+		// Should still produce valid YAML structure.
+		assertContains(t, output, "apiVersion: apps/v1")
+		assertContains(t, output, "kind: Deployment")
+		assertContains(t, output, "spec:")
+	})
+
+	t.Run("unannotated output has no comments", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := gen.Generate("Deployment", nil, &buf)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		output := buf.String()
+		if strings.Contains(output, "# ") {
+			t.Error("unannotated output should not contain comment lines")
+		}
+	})
+
+	t.Run("CRD annotations include descriptions", func(t *testing.T) {
+		docJSON := `{
+			"components": {
+				"schemas": {
+					"com.example.stable.v1.Gadget": {
+						"type": "object",
+						"x-kubernetes-group-version-kind": [
+							{"group": "stable.example.com", "version": "v1", "kind": "Gadget"}
+						],
+						"properties": {
+							"apiVersion": {"type": "string"},
+							"kind": {"type": "string"},
+							"metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+							"spec": {
+								"type": "object",
+								"properties": {
+									"level": {
+										"type": "string",
+										"description": "The power level of the gadget",
+										"enum": ["low", "medium", "high"]
+									},
+									"count": {
+										"type": "integer",
+										"description": "How many gadgets to create"
+									}
+								},
+								"required": ["level", "count"]
+							}
+						}
+					}
+				}
+			}
+		}`
+
+		doc, err := openapi.ParseDocument([]byte(docJSON))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+
+		crdGen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := crdGen.GenerateAnnotated("Gadget", nil, &buf); err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+
+		output := buf.String()
+		assertContains(t, output, "# The power level of the gadget")
+		assertContains(t, output, "# enum: [low, medium, high]")
+		assertContains(t, output, "# How many gadgets to create")
+	})
+
+	t.Run("annotations map is populated", func(t *testing.T) {
+		docJSON := `{
+			"components": {
+				"schemas": {
+					"com.example.stable.v1.Thing": {
+						"type": "object",
+						"x-kubernetes-group-version-kind": [
+							{"group": "stable.example.com", "version": "v1", "kind": "Thing"}
+						],
+						"properties": {
+							"apiVersion": {"type": "string"},
+							"kind": {"type": "string"},
+							"metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+							"spec": {
+								"type": "object",
+								"properties": {
+									"color": {
+										"type": "string",
+										"description": "Primary color"
+									}
+								},
+								"required": ["color"]
+							}
+						}
+					}
+				}
+			}
+		}`
+
+		doc, err := openapi.ParseDocument([]byte(docJSON))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+
+		thingGen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := thingGen.GenerateAnnotated("Thing", nil, &buf); err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+
+		anns := thingGen.Annotations()
+		if anns == nil {
+			t.Fatal("annotations map is nil")
+		}
+		ann, ok := anns["spec.color"]
+		if !ok {
+			t.Fatalf("missing annotation for spec.color, got keys: %v", mapKeys(anns))
+		}
+		if ann.Description != "Primary color" {
+			t.Errorf("expected description 'Primary color', got %q", ann.Description)
+		}
+		if !ann.Required {
+			t.Error("expected spec.color to be marked required")
+		}
+	})
+
+	t.Run("annotations render inside array items", func(t *testing.T) {
+		docJSON := `{
+			"components": {
+				"schemas": {
+					"com.example.stable.v1.App": {
+						"type": "object",
+						"x-kubernetes-group-version-kind": [
+							{"group": "stable.example.com", "version": "v1", "kind": "App"}
+						],
+						"properties": {
+							"apiVersion": {"type": "string"},
+							"kind": {"type": "string"},
+							"metadata": {"type": "object", "properties": {"name": {"type": "string"}}},
+							"spec": {
+								"type": "object",
+								"properties": {
+									"containers": {
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"name": {"type": "string", "description": "Container name"},
+												"image": {"type": "string", "description": "Docker image to run"}
+											},
+											"required": ["name", "image"]
+										}
+									}
+								},
+								"required": ["containers"]
+							}
+						}
+					}
+				}
+			}
+		}`
+
+		doc, err := openapi.ParseDocument([]byte(docJSON))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+
+		appGen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := appGen.GenerateAnnotated("App", nil, &buf); err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+
+		output := buf.String()
+		assertContains(t, output, "# Container name")
+		assertContains(t, output, "# Docker image to run")
+
+		anns := appGen.Annotations()
+		if _, ok := anns["spec.containers.name"]; !ok {
+			t.Errorf("missing annotation for spec.containers.name, got keys: %v", mapKeys(anns))
+		}
+		if _, ok := anns["spec.containers.image"]; !ok {
+			t.Errorf("missing annotation for spec.containers.image, got keys: %v", mapKeys(anns))
+		}
+	})
+}
+
+func mapKeys[K comparable, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// TestSingleDocProducesSameOutput verifies that generating from a single
+// group-version document produces identical output to generating from the
+// full merged document.
+func TestSingleDocProducesSameOutput(t *testing.T) {
+	mergedDoc := loadMergedFixture(t)
+	if mergedDoc == nil {
+		t.Skip("fixtures not available")
+	}
+
+	tests := []struct {
+		resourceType string
+		fixture      string
+	}{
+		{"Deployment", "apis_apps_v1.json"},
+		{"Pod", "api_v1.json"},
+		{"Service", "api_v1.json"},
+		{"CronJob", "apis_batch_v1.json"},
+		{"Ingress", "apis_networking_v1.json"},
+		{"HorizontalPodAutoscaler", "apis_autoscaling_v2.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.resourceType, func(t *testing.T) {
+			fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+			data, err := os.ReadFile(filepath.Join(fixtureDir, tt.fixture))
+			if err != nil {
+				t.Skipf("fixture %s not found: %v", tt.fixture, err)
+			}
+			singleDoc, err := openapi.ParseDocument(data)
+			if err != nil {
+				t.Fatalf("parse fixture: %v", err)
+			}
+
+			mergedGen := NewOpenAPIGenerator(mergedDoc)
+			singleGen := NewOpenAPIGenerator(singleDoc)
+
+			var mergedBuf, singleBuf bytes.Buffer
+			if err := mergedGen.Generate(tt.resourceType, nil, &mergedBuf); err != nil {
+				t.Fatalf("merged generate: %v", err)
+			}
+			if err := singleGen.Generate(tt.resourceType, nil, &singleBuf); err != nil {
+				t.Fatalf("single generate: %v", err)
+			}
+
+			if mergedBuf.String() != singleBuf.String() {
+				t.Errorf("output differs for %s\n--- merged ---\n%s\n--- single ---\n%s",
+					tt.resourceType, mergedBuf.String(), singleBuf.String())
+			}
+		})
+	}
+}
+
 func newTestGenerator(t *testing.T) ResourceGenerator {
 	t.Helper()
 	doc := loadMergedFixture(t)
 	return NewOpenAPIGenerator(doc)
+}
+
+// BenchmarkGenerateFromMergedDoc measures generation when all schemas are
+// merged into one document (the old FetchAll approach).
+func BenchmarkGenerateFromMergedDoc(b *testing.B) {
+	doc := loadMergedFixtureB(b)
+	if doc == nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		gen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := gen.Generate("Deployment", nil, &buf); err != nil {
+			b.Fatalf("generate: %v", err)
+		}
+	}
+}
+
+// BenchmarkGenerateFromSingleDoc measures generation when only the target
+// group-version schema is loaded (the new FetchForResource approach).
+func BenchmarkGenerateFromSingleDoc(b *testing.B) {
+	doc := loadSingleFixtureB(b, "apis_apps_v1.json")
+	if doc == nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		gen := NewOpenAPIGenerator(doc)
+		var buf bytes.Buffer
+		if err := gen.Generate("Deployment", nil, &buf); err != nil {
+			b.Fatalf("generate: %v", err)
+		}
+	}
+}
+
+// BenchmarkBuildGVKIndexMerged measures the cost of building the GVK index
+// from the full merged document.
+func BenchmarkBuildGVKIndexMerged(b *testing.B) {
+	doc := loadMergedFixtureB(b)
+	if doc == nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		buildGVKIndex(doc)
+	}
+}
+
+// BenchmarkBuildGVKIndexSingle measures the cost of building the GVK index
+// from a single group-version document.
+func BenchmarkBuildGVKIndexSingle(b *testing.B) {
+	doc := loadSingleFixtureB(b, "apis_apps_v1.json")
+	if doc == nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		buildGVKIndex(doc)
+	}
+}
+
+// BenchmarkLoadMergedFixture measures the cost of loading and parsing all
+// fixture files (simulating FetchAll).
+func BenchmarkLoadMergedFixture(b *testing.B) {
+	fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+	if _, err := os.ReadDir(fixtureDir); err != nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		doc := loadMergedFixtureB(b)
+		if doc == nil {
+			b.Fatal("failed to load fixtures")
+		}
+	}
+}
+
+// BenchmarkLoadSingleFixture measures the cost of loading a single fixture
+// file (simulating FetchForResource).
+func BenchmarkLoadSingleFixture(b *testing.B) {
+	fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+	if _, err := os.ReadDir(fixtureDir); err != nil {
+		b.Skip("fixtures not available")
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		doc := loadSingleFixtureB(b, "apis_apps_v1.json")
+		if doc == nil {
+			b.Fatal("failed to load fixture")
+		}
+	}
+}
+
+func loadMergedFixtureB(b *testing.B) *openapi.Document {
+	b.Helper()
+	fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+	files, err := os.ReadDir(fixtureDir)
+	if err != nil {
+		return nil
+	}
+
+	merged := map[string]any{
+		"components": map[string]any{
+			"schemas": map[string]any{},
+		},
+	}
+	mergedSchemas := merged["components"].(map[string]any)["schemas"].(map[string]any)
+
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(fixtureDir, f.Name()))
+		if err != nil {
+			b.Fatalf("read fixture %s: %v", f.Name(), err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			b.Fatalf("parse fixture %s: %v", f.Name(), err)
+		}
+		components, _ := doc["components"].(map[string]any)
+		if components == nil {
+			continue
+		}
+		schemas, _ := components["schemas"].(map[string]any)
+		for k, v := range schemas {
+			mergedSchemas[k] = v
+		}
+	}
+
+	data, err := json.Marshal(merged)
+	if err != nil {
+		b.Fatalf("marshal merged doc: %v", err)
+	}
+	doc, err := openapi.ParseDocument(data)
+	if err != nil {
+		b.Fatalf("parse merged doc: %v", err)
+	}
+	return doc
+}
+
+func loadSingleFixtureB(b *testing.B, filename string) *openapi.Document {
+	b.Helper()
+	fixtureDir := filepath.Join("..", "..", "test", "fixtures", "openapi")
+	data, err := os.ReadFile(filepath.Join(fixtureDir, filename))
+	if err != nil {
+		return nil
+	}
+	doc, err := openapi.ParseDocument(data)
+	if err != nil {
+		b.Fatalf("parse fixture %s: %v", filename, err)
+	}
+	return doc
 }
 
 func loadMergedFixture(t *testing.T) *openapi.Document {

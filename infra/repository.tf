@@ -1,6 +1,6 @@
 resource "github_repository" "kubectl_generate" {
   name        = var.repo_name
-  description = "Generate example Kubernetes YAML manifests from your cluster's OpenAPI v3 spec"
+  description = "OpenAPI schema-powered Kubernetes tools: manifest generation, API migration, and kustomize scaffolding"
   visibility  = "public"
 
   has_issues   = true
@@ -24,6 +24,8 @@ resource "github_repository" "kubectl_generate" {
     "yaml",
     "sig-cli",
     "krew",
+    "schemagen",
+    "kustomize",
   ]
 
   lifecycle {

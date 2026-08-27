@@ -42,6 +42,16 @@ func jsonToYAML(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func jsonToAnnotatedYAML(data []byte, annotations map[string]FieldAnnotation) ([]byte, error) {
+	var obj any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	writeAnnotatedYAML(&buf, obj, 0, false, nil, annotations)
+	return buf.Bytes(), nil
+}
+
 func writeYAML(buf *bytes.Buffer, val any, indent int, inArray bool) {
 	prefix := strings.Repeat("  ", indent)
 
@@ -151,6 +161,92 @@ func sortedMapKeys(m map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func writeAnnotatedYAML(buf *bytes.Buffer, val any, indent int, inArray bool, path []string, annotations map[string]FieldAnnotation) {
+	prefix := strings.Repeat("  ", indent)
+
+	switch v := val.(type) {
+	case map[string]any:
+		keys := sortedMapKeys(v)
+		prioritizeKeys(keys)
+		for i, k := range keys {
+			fieldPath := append(append([]string{}, path...), k)
+			pathStr := strings.Join(fieldPath, ".")
+
+			// Write annotation comment before the field.
+			if ann, ok := annotations[pathStr]; ok {
+				commentPrefix := prefix
+				if i == 0 && inArray {
+					level := indent - 1
+					if level < 0 {
+						level = 0
+					}
+					commentPrefix = strings.Repeat("  ", level) + "  "
+				}
+				writeAnnotationComment(buf, ann, commentPrefix)
+			}
+
+			if i == 0 && inArray {
+				fmt.Fprintf(buf, "%s:", k)
+				writeAnnotatedMapValue(buf, v[k], indent, fieldPath, annotations)
+			} else {
+				fmt.Fprintf(buf, "%s%s:", prefix, k)
+				writeAnnotatedMapValue(buf, v[k], indent, fieldPath, annotations)
+			}
+		}
+
+	case []any:
+		for _, item := range v {
+			fmt.Fprintf(buf, "%s- ", prefix)
+			switch elem := item.(type) {
+			case map[string]any:
+				writeAnnotatedYAML(buf, elem, indent+1, true, path, annotations)
+			default:
+				writeScalar(buf, elem)
+				buf.WriteByte('\n')
+			}
+		}
+
+	default:
+		writeScalar(buf, v)
+		buf.WriteByte('\n')
+	}
+}
+
+func writeAnnotatedMapValue(buf *bytes.Buffer, val any, indent int, path []string, annotations map[string]FieldAnnotation) {
+	switch v := val.(type) {
+	case map[string]any:
+		if len(v) == 0 {
+			buf.WriteString(" {}\n")
+		} else {
+			buf.WriteByte('\n')
+			writeAnnotatedYAML(buf, v, indent+1, false, path, annotations)
+		}
+	case []any:
+		if len(v) == 0 {
+			buf.WriteString(" []\n")
+		} else {
+			buf.WriteByte('\n')
+			writeAnnotatedYAML(buf, v, indent+1, false, path, annotations)
+		}
+	default:
+		buf.WriteByte(' ')
+		writeScalar(buf, v)
+		buf.WriteByte('\n')
+	}
+}
+
+func writeAnnotationComment(buf *bytes.Buffer, ann FieldAnnotation, prefix string) {
+	if ann.Description != "" {
+		fmt.Fprintf(buf, "%s# %s\n", prefix, ann.Description)
+	}
+	if len(ann.Enums) > 0 {
+		fmt.Fprintf(buf, "%s# enum: [%s]\n", prefix, strings.Join(ann.Enums, ", "))
+	} else if ann.Type != "" && ann.Description == "" {
+		// Show type hint only when there's no description (avoid noise).
+		fmt.Fprintf(buf, "%s# type: %s\n", prefix, ann.Type)
+	}
 }
 
 func prioritizeKeys(keys []string) {

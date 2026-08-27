@@ -7,16 +7,29 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ogormans-deptstack/kubectl-generate/pkg/defaults"
-	"github.com/ogormans-deptstack/kubectl-generate/pkg/fuzzy"
-	"github.com/ogormans-deptstack/kubectl-generate/pkg/openapi"
+	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/defaults"
+	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/fuzzy"
+	"github.com/ogormans-deptstack/kubectl-schemagen/pkg/openapi"
 )
 
+// FieldAnnotation holds schema metadata for a single field, used by the
+// annotated YAML emitter to render inline comments.
+type FieldAnnotation struct {
+	Description string
+	Type        string
+	Enums       []string
+	Required    bool
+}
+
 type OpenAPIGenerator struct {
-	doc       *openapi.Document
-	gvkIndex  map[string]openapi.GVK
-	overrides map[string]string
-	inVCT     bool
+	doc         *openapi.Document
+	gvkIndex    map[string]openapi.GVK
+	overrides   map[string]string
+	annotations map[string]FieldAnnotation // dot-path -> annotation
+	annotate    bool                       // whether to collect annotations
+	pathStack   []string                   // current field path during walk
+	inVCT       bool
+	isCRD       bool // true when generating for a CRD (group contains '.')
 }
 
 func NewOpenAPIGenerator(doc *openapi.Document) *OpenAPIGenerator {
@@ -42,6 +55,7 @@ func (g *OpenAPIGenerator) Generate(resourceType string, overrides map[string]st
 	}
 
 	g.overrides = overrides
+	g.isCRD = isCRDGroup(gvk.Group)
 	manifest := g.buildManifest(gvk, schema)
 
 	data, err := json.Marshal(manifest)
@@ -58,6 +72,81 @@ func (g *OpenAPIGenerator) Generate(resourceType string, overrides map[string]st
 	return err
 }
 
+// GenerateJSON writes the manifest as indented JSON instead of YAML.
+func (g *OpenAPIGenerator) GenerateJSON(resourceType string, overrides map[string]string, w io.Writer) error {
+	gvk, ok := g.resolveGVK(resourceType)
+	if !ok {
+		suggestions := fuzzy.Suggest(resourceType, g.SupportedTypes(), 3)
+		if len(suggestions) > 0 {
+			return fmt.Errorf("no example available for %q. Did you mean: %s? Try --list", resourceType, strings.Join(suggestions, ", "))
+		}
+		return fmt.Errorf("no example available for %q. Try --list", resourceType)
+	}
+
+	schema, err := g.doc.SchemaForGVK(gvk.Group, gvk.Version, gvk.Kind)
+	if err != nil {
+		return fmt.Errorf("schema lookup failed for %s: %w", gvk.Kind, err)
+	}
+
+	g.overrides = overrides
+	g.isCRD = isCRDGroup(gvk.Group)
+	manifest := g.buildManifest(gvk, schema)
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+	data = append(data, '\n')
+
+	_, err = w.Write(data)
+	return err
+}
+
+// GenerateAnnotated writes the manifest as YAML with inline comments
+// showing field descriptions, types, and enum values from the schema.
+func (g *OpenAPIGenerator) GenerateAnnotated(resourceType string, overrides map[string]string, w io.Writer) error {
+	gvk, ok := g.resolveGVK(resourceType)
+	if !ok {
+		suggestions := fuzzy.Suggest(resourceType, g.SupportedTypes(), 3)
+		if len(suggestions) > 0 {
+			return fmt.Errorf("no example available for %q. Did you mean: %s? Try --list", resourceType, strings.Join(suggestions, ", "))
+		}
+		return fmt.Errorf("no example available for %q. Try --list", resourceType)
+	}
+
+	schema, err := g.doc.SchemaForGVK(gvk.Group, gvk.Version, gvk.Kind)
+	if err != nil {
+		return fmt.Errorf("schema lookup failed for %s: %w", gvk.Kind, err)
+	}
+
+	g.overrides = overrides
+	g.isCRD = isCRDGroup(gvk.Group)
+	g.annotate = true
+	g.annotations = make(map[string]FieldAnnotation)
+	g.pathStack = nil
+	manifest := g.buildManifest(gvk, schema)
+	g.annotate = false
+
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+
+	yamlOut, err := jsonToAnnotatedYAML(data, g.annotations)
+	if err != nil {
+		return fmt.Errorf("convert to annotated YAML: %w", err)
+	}
+
+	_, err = w.Write(yamlOut)
+	return err
+}
+
+// Annotations returns the collected field annotations from the last
+// GenerateAnnotated call. This is primarily useful for testing.
+func (g *OpenAPIGenerator) Annotations() map[string]FieldAnnotation {
+	return g.annotations
+}
+
 func (g *OpenAPIGenerator) SupportedTypes() []string {
 	var types []string
 	seen := make(map[string]bool)
@@ -69,6 +158,31 @@ func (g *OpenAPIGenerator) SupportedTypes() []string {
 	}
 	sort.Strings(types)
 	return types
+}
+
+func (g *OpenAPIGenerator) SupportedTypesWithAliases() []string {
+	kinds := g.SupportedTypes()
+	result := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		aliases := aliasesForKind(kind)
+		if len(aliases) == 0 {
+			result = append(result, kind)
+			continue
+		}
+		var shortNames []string
+		kindLen := len(kind)
+		for _, a := range aliases {
+			if len(a) < kindLen {
+				shortNames = append(shortNames, a)
+			}
+		}
+		if len(shortNames) == 0 {
+			result = append(result, kind)
+			continue
+		}
+		result = append(result, kind+" ("+strings.Join(shortNames, ", ")+")")
+	}
+	return result
 }
 
 func (g *OpenAPIGenerator) buildManifest(gvk openapi.GVK, schema map[string]any) map[string]any {
@@ -86,11 +200,13 @@ func (g *OpenAPIGenerator) buildManifest(gvk openapi.GVK, schema map[string]any)
 		name = override
 	}
 
-	labels := map[string]string{"app.kubernetes.io/name": name}
-	manifest.set("metadata", map[string]any{
+	labels := map[string]any{"app.kubernetes.io/name": name}
+	metadata := map[string]any{
 		"name":   name,
 		"labels": labels,
-	})
+	}
+	g.applyMetadataOverrides(metadata)
+	manifest.set("metadata", metadata)
 
 	props, err := openapi.SchemaProperties(g.doc.Raw(), schema)
 	if err != nil || props == nil {
@@ -103,7 +219,9 @@ func (g *OpenAPIGenerator) buildManifest(gvk openapi.GVK, schema map[string]any)
 		return manifest.toMap()
 	}
 
+	g.pushPath("spec")
 	spec := g.walkSchema(specSchema, gvk.Kind, 0)
+	g.popPath()
 	if spec != nil {
 		g.injectTemplateLabels(spec, name)
 		g.injectTemplateRestartPolicy(spec, gvk.Kind)
@@ -227,6 +345,7 @@ func (g *OpenAPIGenerator) walkSchema(schema map[string]any, kind string, depth 
 		val := g.generateValue(fieldName, resolvedField, kind, depth)
 		if val != nil {
 			result[fieldName] = val
+			g.recordAnnotation(fieldName, resolvedField, isRequired)
 		}
 	}
 
@@ -269,7 +388,9 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 			}
 			return m
 		}
+		g.pushPath(fieldName)
 		sub := g.walkSchema(schema, kind, depth+1)
+		g.popPath()
 		if sub == nil {
 			return nil
 		}
@@ -293,7 +414,9 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 			if isVCT {
 				g.inVCT = true
 			}
+			g.pushPath(fieldName)
 			elem := g.walkSchema(resolved, kind, depth+1)
+			g.popPath()
 			if isVCT {
 				g.inVCT = false
 			}
@@ -305,18 +428,38 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 		return nil
 
 	case "string", "integer", "number", "boolean":
+		// User overrides always win.
 		if v, ok := g.overrides[fieldName]; ok {
 			if schemaType == "integer" {
 				return parseIntOrString(v)
 			}
 			return v
 		}
+
+		// For CRDs, schema-provided example/default takes priority
+		// over hardcoded field defaults since CRD authors set these
+		// intentionally for their specific types.
+		if g.isCRD {
+			if v, ok := schemaExample(schema); ok {
+				return v
+			}
+			if v, ok := schemaDefault(schema); ok {
+				return v
+			}
+		}
+
 		if v, ok := defaults.FieldDefault(fieldName, kind); ok {
 			return v
 		}
-		if v, ok := schemaDefault(schema); ok {
-			return v
+
+		// For built-in types, schema defaults come after field defaults
+		// since our hardcoded defaults produce better output.
+		if !g.isCRD {
+			if v, ok := schemaDefault(schema); ok {
+				return v
+			}
 		}
+
 		if schemaType == "string" {
 			if pattern, ok := schema["pattern"].(string); ok {
 				if v := generatePatternExample(pattern); v != "" {
@@ -327,9 +470,67 @@ func (g *OpenAPIGenerator) generateValue(fieldName string, schema map[string]any
 		if enums := schemaEnums(schema); len(enums) > 0 {
 			return enums[0]
 		}
+
+		// For integers and numbers, respect min/max constraints.
+		if schemaType == "integer" || schemaType == "number" {
+			return constrainedNumericDefault(schema, schemaType, format)
+		}
 		return defaults.TypeDefault(schemaType, format)
 	}
 	return nil
+}
+
+func (g *OpenAPIGenerator) pushPath(segment string) {
+	if g.annotate {
+		g.pathStack = append(g.pathStack, segment)
+	}
+}
+
+func (g *OpenAPIGenerator) popPath() {
+	if g.annotate && len(g.pathStack) > 0 {
+		g.pathStack = g.pathStack[:len(g.pathStack)-1]
+	}
+}
+
+func (g *OpenAPIGenerator) currentPath(fieldName string) string {
+	parts := make([]string, 0, len(g.pathStack)+1)
+	parts = append(parts, g.pathStack...)
+	parts = append(parts, fieldName)
+	return strings.Join(parts, ".")
+}
+
+func (g *OpenAPIGenerator) recordAnnotation(fieldName string, schema map[string]any, isRequired bool) {
+	if !g.annotate {
+		return
+	}
+	path := g.currentPath(fieldName)
+	desc, _ := schema["description"].(string)
+	fieldType := openapi.SchemaType(schema)
+	format, _ := schema["format"].(string)
+	if format != "" {
+		fieldType = fieldType + " (" + format + ")"
+	}
+	enums := schemaEnums(schema)
+
+	// Only record if there's useful metadata.
+	if desc == "" && len(enums) == 0 {
+		return
+	}
+
+	// Clean description: collapse newlines and trim for single-line comments.
+	desc = strings.ReplaceAll(desc, "\n", " ")
+	desc = strings.Join(strings.Fields(desc), " ")
+	// Truncate long descriptions to keep comments readable.
+	if len(desc) > 120 {
+		desc = desc[:117] + "..."
+	}
+
+	g.annotations[path] = FieldAnnotation{
+		Description: desc,
+		Type:        fieldType,
+		Enums:       enums,
+		Required:    isRequired,
+	}
 }
 
 func (g *OpenAPIGenerator) resourceQuantityDefaults(fieldName, kind string) map[string]any {
@@ -365,13 +566,41 @@ func (g *OpenAPIGenerator) applyOverrides(spec map[string]any, kind string) {
 		case "name":
 			continue
 		case "replicas":
-			spec["replicas"] = parseIntOrString(v)
+			if _, hasReplicas := spec["replicas"]; hasReplicas {
+				spec["replicas"] = parseIntOrString(v)
+			}
 		case "image":
 			g.setContainerImage(spec, v)
 		default:
+			if strings.HasPrefix(k, "metadata.") {
+				continue
+			}
 			if strings.Contains(k, ".") {
 				g.setNestedField(spec, k, v)
 			}
+		}
+	}
+}
+
+func (g *OpenAPIGenerator) applyMetadataOverrides(metadata map[string]any) {
+	for k, v := range g.overrides {
+		if !strings.HasPrefix(k, "metadata.") {
+			continue
+		}
+		path := strings.TrimPrefix(k, "metadata.")
+		parts := strings.Split(path, ".")
+		current := metadata
+		for i, part := range parts {
+			if i == len(parts)-1 {
+				current[part] = parseIntOrString(v)
+				break
+			}
+			next, ok := current[part].(map[string]any)
+			if !ok {
+				next = make(map[string]any)
+				current[part] = next
+			}
+			current = next
 		}
 	}
 }
@@ -410,7 +639,7 @@ func (g *OpenAPIGenerator) setNestedField(root map[string]any, path string, valu
 	}
 }
 
-func parseArrayIndex(part string) (int, string, bool) {
+func parseArrayIndex(part string) (idx int, fieldName string, ok bool) {
 	openBracket := strings.Index(part, "[")
 	if openBracket < 0 {
 		return 0, "", false
@@ -419,9 +648,9 @@ func parseArrayIndex(part string) (int, string, bool) {
 	if closeBracket < 0 {
 		return 0, "", false
 	}
-	fieldName := part[:openBracket]
+	fieldName = part[:openBracket]
 	idxStr := part[openBracket+1 : closeBracket]
-	idx := 0
+	idx = 0
 	for _, ch := range idxStr {
 		if ch < '0' || ch > '9' {
 			return 0, "", false
@@ -994,6 +1223,57 @@ func schemaDefault(schema map[string]any) (any, bool) {
 	return val, ok
 }
 
+func schemaExample(schema map[string]any) (any, bool) {
+	val, ok := schema["example"]
+	return val, ok
+}
+
+// constrainedNumericDefault returns an integer or number value that respects
+// the schema's minimum, maximum, exclusiveMinimum, and multipleOf constraints.
+func constrainedNumericDefault(schema map[string]any, schemaType, format string) any {
+	val := 1
+	if min, ok := toFloat64(schema["minimum"]); ok {
+		if val < int(min) {
+			val = int(min)
+		}
+	}
+	if exMin, ok := toFloat64(schema["exclusiveMinimum"]); ok {
+		if val <= int(exMin) {
+			val = int(exMin) + 1
+		}
+	}
+	if max, ok := toFloat64(schema["maximum"]); ok {
+		if val > int(max) {
+			val = int(max)
+		}
+	}
+	if mult, ok := toFloat64(schema["multipleOf"]); ok && mult > 0 {
+		m := int(mult)
+		if val%m != 0 {
+			val = ((val / m) + 1) * m
+		}
+	}
+	if schemaType == "number" {
+		return float64(val)
+	}
+	return val
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	}
+	return 0, false
+}
+
 func hasOneOf(schema map[string]any) bool {
 	if _, ok := schema["oneOf"]; ok {
 		return true
@@ -1053,6 +1333,23 @@ func (g *OpenAPIGenerator) resolveDiscriminatedUnions(result map[string]any, pro
 			result[siblingName] = val
 		}
 	}
+}
+
+// isCRDGroup returns true if the API group belongs to a custom resource
+// definition (not a built-in Kubernetes API group). Built-in groups either
+// have no dots (core ""), end with ".k8s.io", or are well-known system groups.
+func isCRDGroup(group string) bool {
+	if group == "" {
+		return false
+	}
+	if !strings.Contains(group, ".") {
+		return false
+	}
+	// Built-in K8s API groups end with .k8s.io
+	if strings.HasSuffix(group, ".k8s.io") {
+		return false
+	}
+	return true
 }
 
 func lowerFirst(s string) string {

@@ -1,8 +1,8 @@
-# kubectl-generate -- Agent Context
+# kubectl-schemagen -- Agent Context
 
 ## Project
 
-kubectl plugin that generates example YAML from OpenAPI v3 specs. Go module at `github.com/ogormans-deptstack/kubectl-generate`. Apache 2.0.
+kubectl plugin that generates example YAML from OpenAPI v3 specs. Go module at `github.com/ogormans-deptstack/kubectl-schemagen`. Apache 2.0.
 
 ## Conventions
 
@@ -11,13 +11,13 @@ kubectl plugin that generates example YAML from OpenAPI v3 specs. Go module at `
 - Factory pattern: `ensureXXXCRD()` helpers for CRD test groups
 - No `as any` / `@ts-ignore` equivalents -- no lint suppression
 - Commit messages: no `Fixes #N` or auto-close keywords (Prow flags these)
-- Use SSH for git push: `git@github.com:ogormans-deptstack/kubectl-generate.git`
+- Use SSH for git push: `git@github.com:ogormans-deptstack/kubectl-schemagen.git`
 
 ## Key Paths
 
 | What | Where |
 |------|-------|
-| CLI entry | `cmd/kubectl-generate/main.go` |
+| CLI entry | `cmd/kubectl-schemagen/main.go` |
 | Generator | `pkg/generator/openapi_generator.go` |
 | YAML emitter | `pkg/generator/yaml.go` |
 | Schema fetcher | `pkg/openapi/fetcher.go` |
@@ -44,7 +44,7 @@ kubectl plugin that generates example YAML from OpenAPI v3 specs. Go module at `
 
 Following up from the sig-cli bi-weekly discussion on April 16 -- thanks @ardaguclu for the invite and the feedback.
 
-Working prototype is at https://github.com/ogormans-deptstack/kubectl-generate (v0.2.0 released, [krew submission pending](https://github.com/kubernetes-sigs/krew-index/pull/5611)). It reads the cluster's OpenAPI v3 spec and generates apply-ready YAML for any resource type, including CRDs.
+Working prototype is at https://github.com/ogormans-deptstack/kubectl-schemagen (v0.2.0 released, [krew submission pending](https://github.com/kubernetes-sigs/krew-index/pull/5611)). It reads the cluster's OpenAPI v3 spec and generates apply-ready YAML for any resource type, including CRDs.
 
 **How it works:**
 
@@ -52,7 +52,7 @@ The plugin connects via the discovery API, fetches all OpenAPI v3 group-version 
 
 **Demo output:**
 
-$ kubectl generate Deployment --name=web --image=myapp:v2 --replicas=5
+$ kubectl schemagen manifest Deployment --name=web --image=myapp:v2 --replicas=5
 apiVersion: apps/v1
 kind: Deployment
 metadata:

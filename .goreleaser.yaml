@@ -3,13 +3,13 @@ before:
   hooks:
     - go mod download
 builds:
-  - id: kubectl-generate
-    main: ./cmd/kubectl-generate
-    binary: kubectl-generate
+  - id: kubectl-schemagen
+    main: ./cmd/kubectl-schemagen
+    binary: kubectl-schemagen
     env:
       - CGO_ENABLED=0
     ldflags:
-      - "-s -w -X main.version={{.Version}}"
+      - "-s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}"
     goos:
       - linux
       - darwin
@@ -23,7 +23,7 @@ builds:
 
 archives:
   - builds:
-      - kubectl-generate
+      - kubectl-schemagen
     name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
     wrap_in_directory: false
     format: tar.gz

@@ -5,15 +5,110 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.2.1 (Unreleased)
+## v0.6.1
+
+Released: 2026-05-24
 
 BUG FIXES:
 
-- Fix `--set` overrides silently overwritten by post-processors ([#3](https://github.com/ogormans-deptstack/kubectl-generate/issues/3)). `applyOverrides()` now runs after all post-processors, and supports dot-path keys (e.g. `--set spec.template.spec.restartPolicy=OnFailure`) and array indexing (e.g. `--set containers[0].image=nginx`).
+- **Fix annotations missing inside arrays**: Annotation paths used `[]` suffixes that didn't match the YAML renderer's key traversal, causing comments for fields inside arrays (e.g. container image, ports) to silently not render. Removed `[]` from path tracking so annotations now appear correctly for array-nested fields.
+- **Fix potential negative indent in annotated YAML**: Clamp indent level to 0 when rendering annotation comments for first array items, preventing a negative `strings.Repeat` argument.
 
 ENHANCEMENTS:
 
-- Add fuzzy matching for resource type suggestions ([#2](https://github.com/ogormans-deptstack/kubectl-generate/issues/2)). Typos now suggest the closest match using Levenshtein distance (e.g. `Deploymnet` suggests `Deployment`).
+- **Migrate JSON output includes namespace**: The `migrate -o json` output now includes a `namespace` field (omitted when empty) so multi-namespace manifests can be distinguished.
+- **Type hints in annotated output**: When a field has enum values or no description, annotated YAML now renders a `# type: <type>` comment as a hint.
+
+TESTING:
+
+- Add test verifying annotations render correctly for fields nested inside array items.
+
+## v0.6.0
+
+Released: 2026-05-23
+
+ENHANCEMENTS:
+
+- **Annotated YAML output** (`manifest --annotate`): Generate manifests with inline YAML comments showing field descriptions and enum values from the OpenAPI schema. Makes generated output self-documenting -- users can understand each field without switching to `kubectl explain`. Comments are truncated to 120 characters for readability, newlines collapsed to single lines. Off by default to keep clean output for piping to `kubectl create`.
+- Add `GenerateAnnotated` to `ResourceGenerator` interface.
+
+TESTING:
+
+- Add unit tests for annotated output: comment presence, CRD descriptions, enum annotations, annotation map population.
+- Add e2e tests for `--annotate` flag: comment presence, enum comments, no comments without flag.
+- All e2e tests validated locally against kind v1.33.0 before tagging.
+
+## v0.5.0
+
+Released: 2026-05-23
+
+ENHANCEMENTS:
+
+- **Migrate structured output** (`migrate --output json` / `-o json`): Emit results as a JSON array with file, apiVersion, kind, name, status, and replacement fields. Useful for CI dashboards, `jq` pipelines, and programmatic consumption.
+- **Version info**: `--version` now displays commit hash and build date when built via GoReleaser (e.g. `v0.5.0 (commit abc1234, built 2026-05-23T18:00:00Z)`).
+- `Makefile`: add `test-coverage` target for generating coverage reports.
+
+TESTING:
+
+- Add e2e tests for `manifest --output json` (valid JSON, dry-run validation, unsupported format error).
+- Add e2e tests for `migrate --output json` (structured output, field presence).
+- Add e2e tests for `migrate -` stdin support (piped input, `<stdin>` path display).
+- Add e2e tests for migrate exit codes (exit 0 for current, non-zero for removed APIs).
+- All e2e tests validated locally against kind v1.33.0 before tagging.
+
+## v0.4.0
+
+Released: 2026-05-23
+
+Major performance optimization and schema fidelity improvements. Addresses the
+performance gap noted by @ahmetb during krew review.
+
+PERFORMANCE:
+
+- **~12x faster schema loading** for single-resource generation. New `FetchForResource` fetches only the group-version schema containing the requested type instead of downloading all 30-50+ schemas from the cluster. Well-known resource types (Deployment, Pod, Service, etc.) resolve with zero extra HTTP calls via a static path lookup. CRDs use a concurrent fallback scan.
+- Concurrent `FetchAll` and `ListGVKs` fetch group-version schemas in parallel using goroutines, reducing wall-clock time for `--list` and multi-resource scaffold.
+- ~12x reduction in memory allocation (38MB -> 3MB for single-resource generation).
+- Scaffold uses targeted fetching for single resource type.
+
+ENHANCEMENTS:
+
+- **Format-aware string placeholders**: CRD string fields with `format` now generate appropriate placeholder values (email, hostname, ipv4, ipv6, uri, uuid, byte, password, duration, date) instead of the generic "example".
+- **Schema example/default priority for CRDs**: CRD-authored `example` and `default` values in the OpenAPI schema now take priority over hardcoded field defaults. Built-in K8s types retain current priority order.
+- **Constraint-aware numeric values**: Integer and number fields respect `minimum`, `maximum`, `exclusiveMinimum`, and `multipleOf` constraints from the schema.
+- **JSON output** (`manifest --output json` / `-o json`): Generate manifests as indented JSON for programmatic consumption and piping to `jq`.
+- **Migrate stdin support**: Read manifests from stdin using `-` as filename (`kubectl get deploy -o yaml | kubectl schemagen migrate -`).
+- **Migrate exit codes for CI**: Exit 0 = all OK, exit 1 = removed APIs, exit 2 = deprecated APIs (none removed). Enables CI pipelines to fail on removed APIs while allowing deprecated ones.
+- Add `GenerateJSON` to `ResourceGenerator` interface.
+
+TESTING:
+
+- Add benchmarks comparing merged vs targeted schema fetch performance.
+- Add `TestSingleDocProducesSameOutput` verifying single-GV generation produces identical output to full merged document.
+- Add tests for format-aware placeholders, CRD example/default priority, constraint-aware numerics, and JSON output.
+
+## v0.3.0
+
+Released: 2026-05-23
+
+Restructure as kubectl-schemagen with three subcommands.
+
+ENHANCEMENTS:
+
+- Restructure CLI as `kubectl-schemagen` with `manifest`, `migrate`, and `scaffold` subcommands.
+- Add `migrate` subcommand: detect deprecated/removed Kubernetes API versions in YAML manifests.
+- Add `scaffold` subcommand: generate kustomize base directories from resource types.
+- Fix `--replicas` on non-workload types, `--set` metadata path overrides.
+- Add e2e tests for all subcommands including cross-subcommand round-trips.
+
+## v0.2.1
+
+BUG FIXES:
+
+- Fix `--set` overrides silently overwritten by post-processors ([#3](https://github.com/ogormans-deptstack/kubectl-schemagen/issues/3)). `applyOverrides()` now runs after all post-processors, and supports dot-path keys (e.g. `--set spec.template.spec.restartPolicy=OnFailure`) and array indexing (e.g. `--set containers[0].image=nginx`).
+
+ENHANCEMENTS:
+
+- Add fuzzy matching for resource type suggestions ([#2](https://github.com/ogormans-deptstack/kubectl-schemagen/issues/2)). Typos now suggest the closest match using Levenshtein distance (e.g. `Deploymnet` suggests `Deployment`).
 
 ## v0.2.0
 

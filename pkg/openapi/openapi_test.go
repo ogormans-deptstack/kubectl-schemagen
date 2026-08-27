@@ -184,6 +184,52 @@ func TestSchemaType(t *testing.T) {
 	}
 }
 
+func TestHasResourceKind(t *testing.T) {
+	docJSON := `{
+		"components": {
+			"schemas": {
+				"io.k8s.api.core.v1.Pod": {
+					"type": "object",
+					"x-kubernetes-group-version-kind": [
+						{"group": "", "version": "v1", "kind": "Pod"}
+					]
+				},
+				"io.k8s.api.apps.v1.Deployment": {
+					"type": "object",
+					"x-kubernetes-group-version-kind": [
+						{"group": "apps", "version": "v1", "kind": "Deployment"}
+					]
+				}
+			}
+		}
+	}`
+
+	doc, err := ParseDocument([]byte(docJSON))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	tests := []struct {
+		kind     string
+		expected bool
+	}{
+		{"pod", true},
+		{"deployment", true},
+		{"Pod", false}, // hasResourceKind expects lowercase input
+		{"service", false},
+		{"nonexistent", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.kind, func(t *testing.T) {
+			got := doc.hasResourceKind(tt.kind)
+			if got != tt.expected {
+				t.Errorf("hasResourceKind(%q) = %v, want %v", tt.kind, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestParseDocument(t *testing.T) {
 	t.Run("valid JSON", func(t *testing.T) {
 		doc, err := ParseDocument([]byte(`{"openapi": "3.0.0"}`))

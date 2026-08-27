@@ -1,3 +1,3 @@
 # Code of Conduct
 
-kubectl-generate follows the [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md).
+kubectl-schemagen follows the [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md).
